@@ -45,11 +45,14 @@ export const runDiff: RunDiff = async (emulator, base, head, config, signal) => 
   return { markdown: renderMarkdown(report), counts: { gained: report.gained.length, lost: report.lost.length, requests: report.requests } };
 };
 
-/** Start an emulator and run the built-in example on it once, so the first real comparison isn't a cold one. */
-export async function startWarmEmulator(): Promise<EmulatorProcess> {
+/**
+ * Start an emulator and run the built-in example on it a few times, so real comparisons don't hit
+ * a cold JVM (on a slow machine the first runs take noticeably longer, enough to time out).
+ */
+export async function startWarmEmulator(runs = 3): Promise<EmulatorProcess> {
   const em = await startEmulator();
   try {
-    await runDiff(em.address, EXAMPLE_BASE, EXAMPLE_HEAD, {});
+    for (let i = 0; i < runs; i++) await runDiff(em.address, EXAMPLE_BASE, EXAMPLE_HEAD, {});
   } catch (e) {
     await em.stop();
     throw e;

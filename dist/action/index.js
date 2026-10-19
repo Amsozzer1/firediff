@@ -148485,10 +148485,10 @@ var runDiff = async (emulator, base, head, config2, signal) => {
   const report = buildReport(result);
   return { markdown: renderMarkdown(report), counts: { gained: report.gained.length, lost: report.lost.length, requests: report.requests } };
 };
-async function startWarmEmulator() {
+async function startWarmEmulator(runs = 3) {
   const em = await startEmulator();
   try {
-    await runDiff(em.address, EXAMPLE_BASE, EXAMPLE_HEAD, {});
+    for (let i = 0; i < runs; i++) await runDiff(em.address, EXAMPLE_BASE, EXAMPLE_HEAD, {});
   } catch (e) {
     await em.stop();
     throw e;
