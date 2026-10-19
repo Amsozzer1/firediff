@@ -1,5 +1,5 @@
 name: firediff
-description: Diff Firestore security rules on every pull request: see who gained or lost access, as one sticky comment.
+description: 'Diff Firestore security rules on every pull request: see who gained or lost access, as one sticky comment.'
 author: AMSOZZER
 branding:
   icon: shield
