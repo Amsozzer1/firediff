@@ -1,25 +1,16 @@
 # firediff
 
+![firediff's sticky comment on a pull request: four access changes, starting with "any signed-in user can list all docs" on users](docs/comment.png)
+
+This is the comment firediff posted on a pull request that changed `allow read: if isOwner(uid)` to
+`allow read: if isSignedIn()` and dropped the update rule's guard on `role`.
+
 **See who a Firestore security rules change just let in.**
 
 firediff runs the old and new versions of your `firestore.rules` side by side in the Firestore
 emulator. It sends both the same generated requests: signed-out users, strangers, owners, users with
 custom claims or role docs. Then it reports only the requests whose allow/deny flipped. Every row
 comes with a request you can replay. It's deterministic and doesn't use an LLM.
-
-```text
-### firediff · 4 access changes
-
-| Who                    | Can now                        | On          |
-|------------------------|--------------------------------|-------------|
-| any signed-in user     | list all docs                  | `users`     |
-| any signed-in user     | read another user's doc        | `users/{uid}` |
-| the owner              | update their own doc (role)    | `users/{uid}` |
-| other users, the owner | read docs that don't exist yet | `users/{uid}` |
-```
-
-That comment comes from a PR that changed `allow read: if isOwner(uid)` to `allow read: if isSignedIn()`
-and dropped a `role` guard on update.
 
 ## Requirements
 
@@ -33,23 +24,20 @@ Set `FIREDIFF_EMULATOR_JAR` to use a jar you already have.
 ## Use it locally
 
 ```sh
-git clone https://github.com/Amsozzer1/firediff && cd firediff
-
-# dist/ is committed and self-contained: no install needed to run it.
 # Compare two files
-node dist/cli/index.js base.rules head.rules
+npx firediff base.rules head.rules
 
-# Compare a git ref with your working tree (reads the rules path from firebase.json)
-node dist/cli/index.js --since origin/main
+# Compare a branch or commit with your working tree (reads the rules path from firebase.json)
+npx firediff --since main
 
 # Paste two rules files into a local web page
-node dist/cli/index.js playground          # http://127.0.0.1:8787/
+npx firediff playground          # http://127.0.0.1:8787/
 
 # See the generated requests without running them
-node dist/cli/index.js plan base.rules head.rules
+npx firediff plan base.rules head.rules
 ```
 
-`npm link` puts a `firediff` command on your PATH. If `FIRESTORE_EMULATOR_HOST` is set,
+The npm package is one bundled file with no dependencies. If `FIRESTORE_EMULATOR_HOST` is set,
 firediff uses that emulator; otherwise it starts its own on free ports and stops it afterwards.
 
 | Option | |
@@ -205,6 +193,10 @@ pnpm test:emulator    # everything, including the traps and golden reports
 pnpm traps            # corpus/trap-*: hand-written expected flips
 pnpm build            # tsup + ncc → dist/ (commit it; CI fails if it's stale)
 ```
+
+## Related
+
+Same idea for Supabase RLS: [Lintel](https://github.com/Amsozzer1/lintel).
 
 ## License
 
