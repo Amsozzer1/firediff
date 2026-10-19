@@ -1,6 +1,8 @@
 import type { Server } from 'node:http';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { RulesParseError } from '../src/parse/index.js';
 import { DiffTimeoutError } from '../src/playground/hosted.js';
+import { TooManyRequestsError } from '../src/playground/worker.js';
 import { listen, type DiffFn, type PlaygroundOptions } from '../src/playground/server.js';
 
 const rules = (cond: string) => `rules_version = '2';
@@ -106,13 +108,18 @@ describe('playground --hosted', () => {
     expect((await s.post(small)).status).toBe(200);
   });
 
-  it('rejects rules whose matrix is over the request cap with 413', async () => {
-    let ran = 0;
-    const s = await start(async (...a) => (ran++, ok(...a)), { limits: { maxRequests: 3 } });
+  it('answers 413 when the comparison reports a matrix over the request cap', async () => {
+    const s = await start(async () => Promise.reject(new TooManyRequestsError(32, 3)), { limits: { maxRequests: 3 } });
     const r = await s.post(small);
     expect(r.status).toBe(413);
-    expect((await r.json()).error).toMatch(/need \d+ requests; the hosted playground runs up to 3\. Run it locally: npx @amsozzer\/firediff/);
-    expect(ran).toBe(0);
+    expect((await r.json()).error).toMatch(/need 32 requests; the hosted playground runs up to 3\. Run it locally: npx @amsozzer\/firediff/);
+  });
+
+  it("doesn't parse rules on the main thread (the comparison does, off it), but reports its parse errors as 400", async () => {
+    const s = await start(async () => Promise.reject(new RulesParseError('head.rules', 4, 7, "mismatched input")), {});
+    const r = await s.post({ base: 'not rules', head: 'not rules either' });
+    expect(r.status).toBe(400);
+    expect(await r.json()).toMatchObject({ error: "head.rules:4:7: mismatched input", line: 4, column: 7 });
   });
 
   it('rate limits per address: 10 a minute, with Retry-After', async () => {

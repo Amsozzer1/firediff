@@ -1,13 +1,13 @@
 import { createHash } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { marked } from 'marked';
-import { buildPlan, ConfigError, expandCases, parseConfig, type Config } from '../generate/index.js';
+import { ConfigError, parseConfig, type Config } from '../generate/index.js';
 import { parseRules, RulesParseError } from '../parse/index.js';
 import { buildReport, renderMarkdown } from '../report/index.js';
 import { startEmulator, type EmulatorProcess } from '../run/emulator.js';
 import type { EmulatorAddress } from '../run/harness.js';
 import { runPair } from '../run/pipeline.js';
-import { clientKey, DiffTimeoutError, HOSTED_LIMITS, QueueFullError, RateLimiter, RunQueue, type Health, type HostedLimits, type RunDiff } from './hosted.js';
+import { clientKey, DiffTimeoutError, HOSTED_LIMITS, QueueFullError, RateLimiter, RunQueue, TooManyRequestsError, type Health, type HostedLimits, type RunDiff } from './hosted.js';
 import { EXAMPLE_BASE, EXAMPLE_HEAD, playgroundPage } from './page.js';
 
 /** What the page gets back for one comparison. */
@@ -39,7 +39,8 @@ const MAX_BODY = 512 * 1024;
 const LOCALLY = 'Run it locally: npx @amsozzer/firediff base.rules head.rules';
 
 /** One comparison on the given emulator (the real RunDiff). */
-export const runDiff: RunDiff = async (emulator, base, head, config, signal) => {
+export const runDiff: RunDiff = async (emulator, base, head, config, signal, onEmulator) => {
+  onEmulator?.(); // parsing happens inside runPair, so count the whole run as using the emulator
   const result = await runPair({ label: 'base.rules', source: base }, { label: 'head.rules', source: head }, emulator, config, signal);
   const report = buildReport(result);
   return { markdown: renderMarkdown(report), counts: { gained: report.gained.length, lost: report.lost.length, requests: report.requests } };
@@ -151,16 +152,14 @@ export function playgroundHandler(diff: DiffFn, options: PlaygroundOptions = {})
       }
     }
     try {
-      // Parse first: syntax errors come back with line:col without touching the emulator.
-      const baseModel = parseRules(base, 'base.rules');
-      const headModel = parseRules(head, 'head.rules');
-      const config = configText.trim() ? parseConfig(configText, 'firediff.yml') : {};
-      if (limits) {
-        const requests = expandCases(buildPlan(baseModel, headModel, config)).length;
-        if (requests > limits.maxRequests) {
-          return sendJson(res, 413, { error: `These rules need ${requests} requests; the hosted playground runs up to ${limits.maxRequests}. ${LOCALLY}` });
-        }
+      // Locally, parse first: syntax errors come back with line:col without touching the emulator.
+      // Hosted, the comparison parses in a worker thread (worker.ts) and reports the same errors,
+      // so a file that's slow to parse can't stall this thread.
+      if (!limits) {
+        parseRules(base, 'base.rules');
+        parseRules(head, 'head.rules');
       }
+      const config = configText.trim() ? parseConfig(configText, 'firediff.yml') : {};
       const t0 = performance.now();
       const result = await queue.run(() => diff(base, head, config));
       log(`compared: ${result.counts.requests} requests, ${Math.round(performance.now() - t0)} ms`);
@@ -169,6 +168,9 @@ export function playgroundHandler(diff: DiffFn, options: PlaygroundOptions = {})
     } catch (e) {
       if (e instanceof RulesParseError || e instanceof ConfigError) {
         return sendJson(res, 400, { error: e.message, ...(e instanceof RulesParseError ? { line: e.line, column: e.column } : {}) });
+      }
+      if (e instanceof TooManyRequestsError) {
+        return sendJson(res, 413, { error: `These rules need ${e.requests} requests; the hosted playground runs up to ${e.max}. ${LOCALLY}` });
       }
       if (e instanceof QueueFullError) {
         return sendJson(res, 429, { error: 'The playground is busy. Try again in a few seconds.' }, { 'retry-after': '5' });

@@ -199,9 +199,10 @@ describe('EmulatorSupervisor', () => {
   it('gives up after the timeout, aborts the run, and restarts the emulator in the background', async () => {
     const f = fakeEmulators();
     let signal: AbortSignal | undefined;
-    const hang: RunDiff = async (em, _b, _h, _c, s) => {
+    const hang: RunDiff = async (em, _b, _h, _c, s, onEmulator) => {
       if (em.port !== 9000) return result(em.port);
       signal = s;
+      onEmulator?.();
       return new Promise(() => {});
     };
     const sup = new EmulatorSupervisor(f.start, hang, limits);
@@ -215,9 +216,19 @@ describe('EmulatorSupervisor', () => {
     expect(sup.status().restarts).toBe(1);
   });
 
+  it("doesn't restart the emulator when the run timed out before using it (e.g. while parsing)", async () => {
+    const f = fakeEmulators();
+    const parsing: RunDiff = async () => new Promise(() => {});
+    const sup = new EmulatorSupervisor(f.start, parsing, limits);
+    await sup.start();
+    await expect(sup.diff('b', 'h', {})).rejects.toBeInstanceOf(DiffTimeoutError);
+    expect(sup.status()).toMatchObject({ emulator: 'up', restarts: 0 });
+    expect(f.started).toHaveLength(1);
+  });
+
   it("doesn't count the restart against the next comparison's timeout", async () => {
     const f = fakeEmulators({ startDelayMs: [0, 200] });
-    const first: RunDiff = async (em) => (em.port === 9000 ? new Promise(() => {}) : result(em.port));
+    const first: RunDiff = async (em, _b, _h, _c, _s, onEmulator) => (em.port === 9000 ? (onEmulator?.(), new Promise(() => {})) : result(em.port));
     const sup = new EmulatorSupervisor(f.start, first, limits);
     await sup.start();
     await expect(sup.diff('b', 'h', {})).rejects.toBeInstanceOf(DiffTimeoutError);

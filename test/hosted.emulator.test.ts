@@ -40,7 +40,8 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('hosted playground (emulat
 
   const handles: EmulatorProcess[] = [];
   let hangNext = false;
-  const run: RunDiff = (em, b, h, c, signal) => (hangNext ? ((hangNext = false), new Promise(() => {})) : runDiff(em, b, h, c, signal));
+  const run: RunDiff = (em, b, h, c, signal, onEmulator) =>
+    hangNext ? ((hangNext = false), onEmulator?.(), new Promise(() => {})) : runDiff(em, b, h, c, signal, onEmulator);
   const sup = new EmulatorSupervisor(
     async () => {
       const p = await startWarmEmulator();

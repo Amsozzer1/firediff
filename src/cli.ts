@@ -1,12 +1,14 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import type { Server } from 'node:http';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { buildPlan, ConfigError, expandCases, formatPlan, loadConfig, type Config } from './generate/index.js';
 import { parseRules, RulesParseError, type RuleModel } from './parse/index.js';
 import { GitHubError, pullRequestFromEnv, upsertComment } from './github/comment.js';
 import { EmulatorSupervisor, healthReport, hostMemory, HOSTED_LIMITS } from './playground/hosted.js';
-import { emulatorDiff, listen, runDiff, startWarmEmulator } from './playground/server.js';
+import { emulatorDiff, listen, startWarmEmulator } from './playground/server.js';
+import { workerRunDiff } from './playground/worker.js';
 import { buildReport, renderJson, renderMarkdown, renderText } from './report/index.js';
 import { EmulatorError, withEmulator } from './run/emulator.js';
 import { FirebaseJsonError, rulesPathFromFirebaseJson } from './run/firebase-json.js';
@@ -187,7 +189,9 @@ async function playground(args: string[]): Promise<number> {
   }
   // The supervisor owns its emulator (it restarts it), so FIRESTORE_EMULATOR_HOST isn't used here.
   const log = (line: string) => process.stderr.write(`${new Date().toISOString()} ${line}\n`);
-  const supervisor = new EmulatorSupervisor(startWarmEmulator, runDiff, limits, log);
+  // Each comparison runs in a worker thread loaded from this file (the bundle, or src/cli.ts under tsx).
+  const runInWorker = workerRunDiff(fileURLToPath(import.meta.url), limits.maxRequests);
+  const supervisor = new EmulatorSupervisor(startWarmEmulator, runInWorker, limits, log);
   await supervisor.start();
   const server = await listen(supervisor.diff, port, values.host!, {
     hosted: { limits, trustProxy: values['trust-proxy'], ipHeader: values['ip-header'], health: () => healthReport(supervisor.status(), hostMemory(), limits), log },

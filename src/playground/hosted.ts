@@ -136,6 +136,17 @@ export class RunQueue {
   }
 }
 
+/** The rules' request matrix is over the cap (found before the emulator is used). */
+export class TooManyRequestsError extends Error {
+  override name = 'TooManyRequestsError';
+  constructor(
+    readonly requests: number,
+    readonly max: number,
+  ) {
+    super(`these rules need ${requests} requests; the limit is ${max}`);
+  }
+}
+
 export class DiffTimeoutError extends Error {
   override name = 'DiffTimeoutError';
   constructor(readonly timeoutMs: number) {
@@ -145,8 +156,18 @@ export class DiffTimeoutError extends Error {
 
 export type EmulatorHandle = Pick<EmulatorProcess, 'address' | 'exit' | 'exited' | 'rssBytes' | 'stop'>;
 
-/** One comparison on a given emulator; it should stop early once `signal` aborts. */
-export type RunDiff = (emulator: EmulatorAddress, base: string, head: string, config: Config, signal?: AbortSignal) => Promise<DiffResult>;
+/**
+ * One comparison on a given emulator; it should stop early once `signal` aborts, and call
+ * `onEmulator` when it starts using the emulator (a run aborted before that leaves it untouched).
+ */
+export type RunDiff = (
+  emulator: EmulatorAddress,
+  base: string,
+  head: string,
+  config: Config,
+  signal?: AbortSignal,
+  onEmulator?: () => void,
+) => Promise<DiffResult>;
 
 export interface SupervisorStatus {
   emulator: 'up' | 'starting' | 'down';
@@ -157,7 +178,7 @@ export interface SupervisorStatus {
 
 /**
  * Owns the emulator behind the hosted playground. A comparison that runs past `timeoutMs` is
- * aborted and its emulator replaced in the background; the next comparison waits for the new one
+ * aborted, and if it had started using the emulator, the emulator is replaced in the background; the next comparison waits for the new one
  * before its own clock starts. Callers serialize comparisons (see RunQueue).
  */
 export class EmulatorSupervisor {
@@ -184,7 +205,10 @@ export class EmulatorSupervisor {
   readonly diff: DiffFn = async (base, head, config) => {
     const em = await this.ready();
     const ac = new AbortController();
-    const run = this.runDiff(em.address, base, head, config, ac.signal);
+    let touched = false;
+    const run = this.runDiff(em.address, base, head, config, ac.signal, () => {
+      touched = true;
+    });
     run.catch(() => undefined); // an abandoned run may still reject later
     let timer: NodeJS.Timeout | undefined;
     const timedOut = new Promise<never>((_, reject) => {
@@ -195,7 +219,8 @@ export class EmulatorSupervisor {
     } catch (e) {
       if (e instanceof DiffTimeoutError) {
         ac.abort(e);
-        if (this.handle === em) this.restart('a comparison timed out');
+        // Timed out while still parsing or planning: the emulator was never used, so keep it.
+        if (this.handle === em && touched) this.restart('a comparison timed out');
       }
       throw e;
     } finally {

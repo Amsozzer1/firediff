@@ -46885,10 +46885,14 @@ __nccwpck_require__.d(dist_esm_index_esm_namespaceObject, {
   setLogLevel: () => (index_esm_setLogLevel)
 });
 
+;// CONCATENATED MODULE: external "worker_threads"
+const external_worker_threads_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("worker_threads");
 ;// CONCATENATED MODULE: external "child_process"
 const external_child_process_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("child_process");
 // EXTERNAL MODULE: external "fs"
 var external_fs_ = __nccwpck_require__(9896);
+// EXTERNAL MODULE: external "url"
+var external_url_ = __nccwpck_require__(7016);
 // EXTERNAL MODULE: external "util"
 var external_util_ = __nccwpck_require__(9023);
 ;// CONCATENATED MODULE: external "node:module"
@@ -127492,7 +127496,11 @@ function assertSucceeds(pr) {
 
 ;// CONCATENATED MODULE: ./.build/bin.js
 
+// src/bin.ts
+
+
 // src/cli.ts
+
 
 
 
@@ -147000,6 +147008,16 @@ var RunQueue = class {
     return p;
   }
 };
+var TooManyRequestsError = class extends Error {
+  constructor(requests, max) {
+    super(`these rules need ${requests} requests; the limit is ${max}`);
+    this.requests = requests;
+    this.max = max;
+  }
+  requests;
+  max;
+  name = "TooManyRequestsError";
+};
 var DiffTimeoutError = class extends Error {
   constructor(timeoutMs) {
     super(`comparison took longer than ${timeoutMs / 1e3} s`);
@@ -147034,7 +147052,10 @@ var EmulatorSupervisor = class {
   diff = async (base, head, config2) => {
     const em = await this.ready();
     const ac = new AbortController();
-    const run2 = this.runDiff(em.address, base, head, config2, ac.signal);
+    let touched = false;
+    const run2 = this.runDiff(em.address, base, head, config2, ac.signal, () => {
+      touched = true;
+    });
     run2.catch(() => void 0);
     let timer;
     const timedOut = new Promise((_, reject) => {
@@ -147045,7 +147066,7 @@ var EmulatorSupervisor = class {
     } catch (e) {
       if (e instanceof DiffTimeoutError) {
         ac.abort(e);
-        if (this.handle === em) this.restart("a comparison timed out");
+        if (this.handle === em && touched) this.restart("a comparison timed out");
       }
       throw e;
     } finally {
@@ -148471,7 +148492,8 @@ function playgroundPage(hosted) {
 // src/playground/server.ts
 var MAX_BODY = 512 * 1024;
 var LOCALLY = "Run it locally: npx @amsozzer/firediff base.rules head.rules";
-var runDiff = async (emulator, base, head, config2, signal) => {
+var runDiff = async (emulator, base, head, config2, signal, onEmulator) => {
+  onEmulator?.();
   const result = await runPair({ label: "base.rules", source: base }, { label: "head.rules", source: head }, emulator, config2, signal);
   const report = buildReport(result);
   return { markdown: renderMarkdown(report), counts: { gained: report.gained.length, lost: report.lost.length, requests: report.requests } };
@@ -148563,15 +148585,11 @@ function playgroundHandler(diff, options = {}) {
       }
     }
     try {
-      const baseModel = parseRules(base, "base.rules");
-      const headModel = parseRules(head, "head.rules");
-      const config2 = configText.trim() ? parseConfig(configText, "firediff.yml") : {};
-      if (limits) {
-        const requests = expandCases(buildPlan(baseModel, headModel, config2)).length;
-        if (requests > limits.maxRequests) {
-          return sendJson(res, 413, { error: `These rules need ${requests} requests; the hosted playground runs up to ${limits.maxRequests}. ${LOCALLY}` });
-        }
+      if (!limits) {
+        parseRules(base, "base.rules");
+        parseRules(head, "head.rules");
       }
+      const config2 = configText.trim() ? parseConfig(configText, "firediff.yml") : {};
       const t0 = performance.now();
       const result = await queue.run(() => diff(base, head, config2));
       log(`compared: ${result.counts.requests} requests, ${Math.round(performance.now() - t0)} ms`);
@@ -148580,6 +148598,9 @@ function playgroundHandler(diff, options = {}) {
     } catch (e) {
       if (e instanceof RulesParseError || e instanceof ConfigError) {
         return sendJson(res, 400, { error: e.message, ...e instanceof RulesParseError ? { line: e.line, column: e.column } : {} });
+      }
+      if (e instanceof TooManyRequestsError) {
+        return sendJson(res, 413, { error: `These rules need ${e.requests} requests; the hosted playground runs up to ${e.max}. ${LOCALLY}` });
       }
       if (e instanceof QueueFullError) {
         return sendJson(res, 429, { error: "The playground is busy. Try again in a few seconds." }, { "retry-after": "5" });
@@ -148614,6 +148635,53 @@ function listen(diff, port, host, options = {}) {
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, host, () => resolve(server));
+  });
+}
+
+// src/playground/worker.ts
+
+var MARK = "firediffComparisonWorker";
+async function serve(job, post) {
+  try {
+    const base = parseRules(job.base, "base.rules");
+    const head = parseRules(job.head, "head.rules");
+    const requests = expandCases(buildPlan(base, head, job.config)).length;
+    if (requests > job.maxRequests) return post({ kind: "too-many", requests });
+    post({ kind: "emulator" });
+    post({ kind: "done", result: await runDiff(job.emulator, job.base, job.head, job.config) });
+  } catch (e) {
+    if (e instanceof RulesParseError) post({ kind: "parse-error", file: e.file, line: e.line, column: e.column, reason: e.reason });
+    else post({ kind: "error", message: e.message });
+  }
+}
+if (!external_worker_threads_namespaceObject.isMainThread && external_worker_threads_namespaceObject.workerData?.[MARK]) void serve(external_worker_threads_namespaceObject.workerData.job, (m) => external_worker_threads_namespaceObject.parentPort.postMessage(m));
+function workerRunDiff(entry, maxRequests, maxHeapMb = 384) {
+  return (emulator, base, head, config2, signal, onEmulator) => new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
+    const job = { emulator, base, head, config: config2, maxRequests };
+    const worker = new external_worker_threads_namespaceObject.Worker(entry, { workerData: { [MARK]: true, job }, resourceLimits: { maxOldGenerationSizeMb: maxHeapMb } });
+    let settled = false;
+    const finish = (settle) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", onAbort);
+      void worker.terminate();
+      settle();
+    };
+    const onAbort = () => finish(() => reject(signal.reason));
+    signal?.addEventListener("abort", onAbort, { once: true });
+    worker.on("message", (m) => {
+      if (m.kind === "emulator") onEmulator?.();
+      else if (m.kind === "done") finish(() => resolve(m.result));
+      else if (m.kind === "too-many") finish(() => reject(new TooManyRequestsError(m.requests, maxRequests)));
+      else if (m.kind === "parse-error") finish(() => reject(new RulesParseError(m.file, m.line, m.column, m.reason)));
+      else finish(() => reject(new Error(m.message)));
+    });
+    worker.on(
+      "error",
+      (e) => finish(() => reject(e.code === "ERR_WORKER_OUT_OF_MEMORY" ? new Error("these rules need more memory than the hosted playground allows") : e))
+    );
+    worker.on("exit", (code2) => finish(() => reject(new Error(`comparison worker exited (${code2})`))));
   });
 }
 
@@ -148805,7 +148873,8 @@ async function playground(args) {
   }
   const log = (line) => process.stderr.write(`${(/* @__PURE__ */ new Date()).toISOString()} ${line}
 `);
-  const supervisor = new EmulatorSupervisor(startWarmEmulator, runDiff, limits, log);
+  const runInWorker = workerRunDiff((0,external_url_.fileURLToPath)(import.meta.url), limits.maxRequests);
+  const supervisor = new EmulatorSupervisor(startWarmEmulator, runInWorker, limits, log);
   await supervisor.start();
   const server = await listen(supervisor.diff, port, values.host, {
     hosted: { limits, trustProxy: values["trust-proxy"], ipHeader: values["ip-header"], health: () => healthReport(supervisor.status(), hostMemory(), limits), log }
@@ -148840,9 +148909,11 @@ ${USAGE}`);
 }
 
 // src/bin.ts
-main(process.argv.slice(2)).then((code2) => {
-  process.exitCode = code2;
-});
+if (external_worker_threads_namespaceObject.isMainThread) {
+  main(process.argv.slice(2)).then((code2) => {
+    process.exitCode = code2;
+  });
+}
 /**
  * @license
  * Copyright 2026 Google LLC
