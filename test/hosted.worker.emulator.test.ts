@@ -32,6 +32,23 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !existsSync(bundle))('ho
     expect(touched).toBe(true);
   }, 60_000);
 
+  it('starts the next worker ahead of time, so back-to-back runs skip loading it', async () => {
+    const [b, h] = trap('trap-01');
+    const run = workerRunDiff(bundle, 150);
+    await run.ready();
+    const t0 = performance.now();
+    const first = await run(emulatorFromEnv(), b, h, {});
+    const warm = performance.now() - t0;
+    await run.ready();
+    expect(await run(emulatorFromEnv(), b, h, {})).toEqual(first);
+    // A cold worker has to load the whole bundle first; a waiting one doesn't.
+    const cold = workerRunDiff(bundle, 150);
+    const t1 = performance.now();
+    await cold(emulatorFromEnv(), b, h, {});
+    expect(performance.now() - t1).toBeGreaterThan(warm);
+    await Promise.all([run.close(), cold.close()]);
+  }, 60_000);
+
   it('reports parse errors with line and column', async () => {
     const [b] = trap('trap-01');
     const err = await workerRunDiff(bundle, 150)(emulatorFromEnv(), b, 'rules_version = ', {}).catch((e) => e);

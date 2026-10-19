@@ -192,14 +192,14 @@ async function playground(args: string[]): Promise<number> {
   // Each comparison runs in a worker thread loaded from this file (the bundle, or src/cli.ts under tsx).
   const runInWorker = workerRunDiff(fileURLToPath(import.meta.url), limits.maxRequests);
   const supervisor = new EmulatorSupervisor(startWarmEmulator, runInWorker, limits, log);
-  await supervisor.start();
+  await Promise.all([supervisor.start(), runInWorker.ready()]);
   const server = await listen(supervisor.diff, port, values.host!, {
     hosted: { limits, trustProxy: values['trust-proxy'], ipHeader: values['ip-header'], health: () => healthReport(supervisor.status(), hostMemory(), limits), log },
   });
   const { port: actual } = server.address() as { port: number };
   log(`firediff playground (hosted): http://${values.host}:${actual}/  ${limits.maxRequests} requests, ${limits.timeoutMs / 1000} s per comparison`);
   await untilStopped(server);
-  await supervisor.stop();
+  await Promise.all([supervisor.stop(), runInWorker.close()]);
   return 0;
 }
 

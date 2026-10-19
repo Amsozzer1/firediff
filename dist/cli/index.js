@@ -148654,23 +148654,50 @@ async function serve(job, post) {
     else post({ kind: "error", message: e.message });
   }
 }
-if (!external_worker_threads_namespaceObject.isMainThread && external_worker_threads_namespaceObject.workerData?.[MARK]) void serve(external_worker_threads_namespaceObject.workerData.job, (m) => external_worker_threads_namespaceObject.parentPort.postMessage(m));
+if (!external_worker_threads_namespaceObject.isMainThread && external_worker_threads_namespaceObject.workerData?.[MARK]) {
+  external_worker_threads_namespaceObject.parentPort.once("message", (job) => void serve(job, (m) => external_worker_threads_namespaceObject.parentPort.postMessage(m)));
+  external_worker_threads_namespaceObject.parentPort.postMessage({ kind: "ready" });
+}
 function workerRunDiff(entry, maxRequests, maxHeapMb = 384) {
-  return (emulator, base, head, config2, signal, onEmulator) => new Promise((resolve, reject) => {
+  const spawn2 = () => {
+    const worker = new external_worker_threads_namespaceObject.Worker(entry, { workerData: { [MARK]: true }, resourceLimits: { maxOldGenerationSizeMb: maxHeapMb } });
+    worker.unref();
+    const ready = new Promise((resolve) => {
+      worker.once("message", () => resolve());
+      worker.once("error", () => resolve());
+      worker.once("exit", () => resolve());
+    });
+    const w = { worker, ready, dead: false };
+    worker.once("exit", () => w.dead = true);
+    return w;
+  };
+  let spare = null;
+  let closed = false;
+  const take = () => {
+    const w = spare && !spare.dead ? spare : spawn2();
+    spare = null;
+    return w;
+  };
+  const restock = () => {
+    if (!closed && (!spare || spare.dead)) spare = spawn2();
+  };
+  const run2 = ((emulator, base, head, config2, signal, onEmulator) => new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(signal.reason);
-    const job = { emulator, base, head, config: config2, maxRequests };
-    const worker = new external_worker_threads_namespaceObject.Worker(entry, { workerData: { [MARK]: true, job }, resourceLimits: { maxOldGenerationSizeMb: maxHeapMb } });
+    const { worker, ready } = take();
+    worker.ref();
     let settled = false;
     const finish = (settle) => {
       if (settled) return;
       settled = true;
       signal?.removeEventListener("abort", onAbort);
       void worker.terminate();
+      restock();
       settle();
     };
     const onAbort = () => finish(() => reject(signal.reason));
     signal?.addEventListener("abort", onAbort, { once: true });
     worker.on("message", (m) => {
+      if (m.kind === "ready") return;
       if (m.kind === "emulator") onEmulator?.();
       else if (m.kind === "done") finish(() => resolve(m.result));
       else if (m.kind === "too-many") finish(() => reject(new TooManyRequestsError(m.requests, maxRequests)));
@@ -148682,7 +148709,20 @@ function workerRunDiff(entry, maxRequests, maxHeapMb = 384) {
       (e) => finish(() => reject(e.code === "ERR_WORKER_OUT_OF_MEMORY" ? new Error("these rules need more memory than the hosted playground allows") : e))
     );
     worker.on("exit", (code2) => finish(() => reject(new Error(`comparison worker exited (${code2})`))));
-  });
+    const job = { emulator, base, head, config: config2, maxRequests };
+    void ready.then(() => worker.postMessage(job));
+  }));
+  run2.ready = async () => {
+    restock();
+    await spare?.ready;
+  };
+  run2.close = async () => {
+    closed = true;
+    const s = spare;
+    spare = null;
+    if (s) await s.worker.terminate();
+  };
+  return run2;
 }
 
 // src/run/firebase-json.ts
@@ -148875,14 +148915,14 @@ async function playground(args) {
 `);
   const runInWorker = workerRunDiff((0,external_url_.fileURLToPath)(import.meta.url), limits.maxRequests);
   const supervisor = new EmulatorSupervisor(startWarmEmulator, runInWorker, limits, log);
-  await supervisor.start();
+  await Promise.all([supervisor.start(), runInWorker.ready()]);
   const server = await listen(supervisor.diff, port, values.host, {
     hosted: { limits, trustProxy: values["trust-proxy"], ipHeader: values["ip-header"], health: () => healthReport(supervisor.status(), hostMemory(), limits), log }
   });
   const { port: actual } = server.address();
   log(`firediff playground (hosted): http://${values.host}:${actual}/  ${limits.maxRequests} requests, ${limits.timeoutMs / 1e3} s per comparison`);
   await untilStopped(server);
-  await supervisor.stop();
+  await Promise.all([supervisor.stop(), runInWorker.close()]);
   return 0;
 }
 async function main(argv) {
