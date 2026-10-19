@@ -12,9 +12,9 @@ emulator. It sends both the same generated requests: signed-out users, strangers
 custom claims or role docs. Then it reports only the requests whose allow/deny flipped. Every row
 comes with a request you can replay. It's deterministic and doesn't use an LLM.
 
-<!-- Switch on once the hosted playground is live (deploy/README.md), with the real subdomain:
-**[Try it in the browser →](https://PLAYGROUND_DOMAIN/)** No install: paste two rules files and compare.
--->
+**[Try it in the browser →](https://firediff.amsozzer.com/)** No install: paste two rules files and compare.
+The hosted playground takes small files (up to 150 generated requests, 5 s per comparison); for
+bigger ones, run it locally.
 
 ## Requirements
 
