@@ -165,10 +165,16 @@ settings:
 importers:
 
   .:
-    dependencies:
+    devDependencies:
       '@firebase/rules-unit-testing':
         specifier: 6.0.0
         version: 6.0.0(firebase@13.0.0)
+      '@types/node':
+        specifier: ^22.20.5
+        version: 22.20.5
+      '@vercel/ncc':
+        specifier: 0.38.3
+        version: 0.38.3
       ajv:
         specifier: ^8.20.0
         version: 8.20.0
@@ -178,22 +184,12 @@ importers:
       firebase:
         specifier: 13.0.0
         version: 13.0.0
-      marked:
-        specifier: 15.0.12
-        version: 15.0.12
-      yaml:
-        specifier: ^2.9.1
-        version: 2.9.1
-    devDependencies:
-      '@types/node':
-        specifier: ^22.20.5
-        version: 22.20.5
-      '@vercel/ncc':
-        specifier: 0.38.3
-        version: 0.38.3
       firebase-tools:
         specifier: 15.34.0
         version: 15.34.0(@types/node@22.20.5)(supports-color@7.2.0)
+      marked:
+        specifier: 15.0.12
+        version: 15.0.12
       tsup:
         specifier: ^9.0.0
         version: 9.0.0(postcss@8.5.30)(tsx@4.23.15)(typescript@7.0.2)(yaml@2.9.1)
@@ -206,6 +202,9 @@ importers:
       vitest:
         specifier: ^5.0.5
         version: 5.0.5(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
 
 packages:
 
