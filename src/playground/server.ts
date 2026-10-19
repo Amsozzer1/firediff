@@ -211,7 +211,13 @@ export function playgroundHandler(diff: DiffFn, options: PlaygroundOptions = {})
   }
 
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-    const url = new URL(req.url ?? '/', 'http://localhost');
+    // Only the path matters. new URL(req.url, base) throws on '//' (it reads as a host), so prefix the origin.
+    let url: URL;
+    try {
+      url = new URL(`http://localhost${req.url?.startsWith('/') ? req.url : '/'}`);
+    } catch {
+      return sendJson(res, 404, { error: 'not found' });
+    }
     if (req.method === 'GET' && url.pathname === '/') return send(res, 200, 'text/html; charset=utf-8', page, { 'content-security-policy': csp });
     if (req.method === 'GET' && url.pathname === '/robots.txt') return send(res, 200, 'text/plain; charset=utf-8', robots, { 'cache-control': 'public, max-age=3600' });
     if (req.method === 'GET' && url.pathname === '/sitemap.xml' && sitemap) {
@@ -231,7 +237,14 @@ export function playgroundHandler(diff: DiffFn, options: PlaygroundOptions = {})
 /** Listen on host:port; resolves once listening. */
 export function listen(diff: DiffFn, port: number, host: string, options: PlaygroundOptions = {}): Promise<Server> {
   const handler = playgroundHandler(diff, options);
-  const server = createServer((req, res) => void handler(req, res));
+  // One bad request must never take the server down: answer 500 and carry on.
+  const server = createServer((req, res) =>
+    handler(req, res).catch((e: unknown) => {
+      options.hosted?.log?.(`request failed: ${(e as Error).message}`);
+      if (!res.headersSent) sendJson(res, 500, { error: 'internal error' });
+      else res.destroy();
+    }),
+  );
   if (options.hosted) {
     // Slow clients shouldn't hold sockets open (the proxy in front buffers requests anyway).
     server.headersTimeout = 10_000;

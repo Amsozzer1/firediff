@@ -213,6 +213,25 @@ describe('playground --hosted', () => {
     expect(html).toContain('https://github.com/Amsozzer1/firediff');
   });
 
+  it('survives odd request paths (a request for // used to crash the server)', async () => {
+    const s = await start(ok, {});
+    const { request } = await import('node:http');
+    const raw = (path: string) =>
+      new Promise<number>((resolve, reject) => {
+        const u = new URL(s.url);
+        request({ host: u.hostname, port: u.port, path, method: 'GET' }, (res) => {
+          res.resume();
+          resolve(res.statusCode!);
+        })
+          .on('error', reject)
+          .end();
+      });
+    expect(await raw('//')).toBe(404);
+    expect(await raw('//evil.example/x')).toBe(404);
+    expect(await raw('/%')).toBe(404);
+    expect((await fetch(`${s.url}/healthz`)).status).toBe(200);
+  });
+
   it('serves robots.txt, sitemap.xml and llms.txt', async () => {
     const s = await start(ok, { publicUrl: 'https://play.example' });
     const robots = await (await fetch(`${s.url}/robots.txt`)).text();

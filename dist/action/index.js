@@ -148706,7 +148706,12 @@ function playgroundHandler(diff, options = {}) {
     }
   }
   return async (req, res) => {
-    const url = new URL(req.url ?? "/", "http://localhost");
+    let url;
+    try {
+      url = new URL(`http://localhost${req.url?.startsWith("/") ? req.url : "/"}`);
+    } catch {
+      return sendJson(res, 404, { error: "not found" });
+    }
     if (req.method === "GET" && url.pathname === "/") return send(res, 200, "text/html; charset=utf-8", page, { "content-security-policy": csp });
     if (req.method === "GET" && url.pathname === "/robots.txt") return send(res, 200, "text/plain; charset=utf-8", robots, { "cache-control": "public, max-age=3600" });
     if (req.method === "GET" && url.pathname === "/sitemap.xml" && sitemap) {
@@ -148724,7 +148729,13 @@ function playgroundHandler(diff, options = {}) {
 }
 function listen(diff, port, host, options = {}) {
   const handler = playgroundHandler(diff, options);
-  const server = (0,external_http_.createServer)((req, res) => void handler(req, res));
+  const server = (0,external_http_.createServer)(
+    (req, res) => handler(req, res).catch((e) => {
+      options.hosted?.log?.(`request failed: ${e.message}`);
+      if (!res.headersSent) sendJson(res, 500, { error: "internal error" });
+      else res.destroy();
+    })
+  );
   if (options.hosted) {
     server.headersTimeout = 1e4;
     server.requestTimeout = 15e3;
