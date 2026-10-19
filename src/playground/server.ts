@@ -23,6 +23,8 @@ export interface HostedOptions {
   limits?: Partial<HostedLimits>;
   /** Rate-limit on the last X-Forwarded-For entry. Only behind a reverse proxy that sets it. */
   trustProxy?: boolean;
+  /** Rate-limit on this header instead (cf-connecting-ip behind a Cloudflare Tunnel). Only when every request comes through that proxy. */
+  ipHeader?: string;
   /** Served at /healthz: 200 when ok, 503 otherwise. */
   health?: () => Health;
   now?: () => number;
@@ -117,7 +119,7 @@ export function playgroundHandler(diff: DiffFn, options: PlaygroundOptions = {})
 
   async function compare(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (limiter) {
-      const t = limiter.take(clientKey(req, hosted!.trustProxy ?? false));
+      const t = limiter.take(clientKey(req, hosted!.trustProxy ?? false, hosted!.ipHeader));
       if (!t.ok) return sendJson(res, 429, { error: t.message }, { 'retry-after': String(t.retryAfterSec) });
     }
 

@@ -146965,10 +146965,12 @@ function ipv6Groups(ip) {
   const t = tail ? tail.split(":") : [];
   return [...h, ...Array(8 - h.length - t.length).fill("0"), ...t];
 }
-function clientKey(req, trustProxy) {
+function clientKey(req, trustProxy, ipHeader) {
   let ip = req.socket.remoteAddress ?? "";
   const xff = req.headers["x-forwarded-for"];
-  if (trustProxy && typeof xff === "string" && xff.trim()) ip = xff.split(",").at(-1).trim();
+  const fromHeader = ipHeader ? req.headers[ipHeader.toLowerCase()] : void 0;
+  if (typeof fromHeader === "string" && fromHeader.trim()) ip = fromHeader.split(",")[0].trim();
+  else if (trustProxy && typeof xff === "string" && xff.trim()) ip = xff.split(",").at(-1).trim();
   ip = ip.replace(/^::ffff:(?=\d+\.\d+\.\d+\.\d+$)/i, "").replace(/%.*$/, "");
   if (!(0,external_net_.isIPv6)(ip)) return ip;
   const groups = ipv6Groups(ip).map((g) => /^[0-9a-f]{1,4}$/i.test(g) ? parseInt(g, 16).toString(16) : "0");
@@ -148533,7 +148535,7 @@ function playgroundHandler(diff, options = {}) {
   });
   async function compare(req, res) {
     if (limiter) {
-      const t = limiter.take(clientKey(req, hosted.trustProxy ?? false));
+      const t = limiter.take(clientKey(req, hosted.trustProxy ?? false, hosted.ipHeader));
       if (!t.ok) return sendJson(res, 429, { error: t.message }, { "retry-after": String(t.retryAfterSec) });
     }
     let input;
@@ -148641,7 +148643,7 @@ var USAGE = `usage:
   firediff --since <git-ref> [options]           compare <ref>:<rules> with the working tree
   firediff plan <base.rules> <head.rules> [--config firediff.yml] [--format text|json]
   firediff playground [--port 8787] [--host 127.0.0.1]   paste two rules files in a local web page
-  firediff playground --hosted [--trust-proxy] [--max-requests 600] [--timeout 5]
+  firediff playground --hosted [--trust-proxy | --ip-header <name>] [--max-requests 600] [--timeout 5]
                                                  the same page for a public server: size, request
                                                  and rate limits, and a self-restarting emulator
 
@@ -148772,6 +148774,7 @@ async function playground(args) {
       host: { type: "string", default: "127.0.0.1" },
       hosted: { type: "boolean", default: false },
       "trust-proxy": { type: "boolean", default: false },
+      "ip-header": { type: "string" },
       "max-requests": { type: "string" },
       timeout: { type: "string" }
     }
@@ -148779,7 +148782,9 @@ async function playground(args) {
   const port = Number(values.port);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new UsageError(`bad --port ${values.port}`);
   if (!values.hosted) {
-    if (values["trust-proxy"] || values["max-requests"] || values.timeout) throw new UsageError("--trust-proxy, --max-requests and --timeout go with --hosted");
+    if (values["trust-proxy"] || values["ip-header"] || values["max-requests"] || values.timeout) {
+      throw new UsageError("--trust-proxy, --ip-header, --max-requests and --timeout go with --hosted");
+    }
     await withEmulator(async (emulator) => {
       const server2 = await listen(emulatorDiff(emulator), port, values.host);
       const { port: actual2 } = server2.address();
@@ -148803,7 +148808,7 @@ async function playground(args) {
   const supervisor = new EmulatorSupervisor(startWarmEmulator, runDiff, limits, log);
   await supervisor.start();
   const server = await listen(supervisor.diff, port, values.host, {
-    hosted: { limits, trustProxy: values["trust-proxy"], health: () => healthReport(supervisor.status(), hostMemory(), limits), log }
+    hosted: { limits, trustProxy: values["trust-proxy"], ipHeader: values["ip-header"], health: () => healthReport(supervisor.status(), hostMemory(), limits), log }
   });
   const { port: actual } = server.address();
   log(`firediff playground (hosted): http://${values.host}:${actual}/  ${limits.maxRequests} requests, ${limits.timeoutMs / 1e3} s per comparison`);

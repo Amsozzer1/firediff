@@ -93,13 +93,16 @@ function ipv6Groups(ip: string): string[] {
 }
 
 /**
- * The address to rate-limit on. Behind a reverse proxy (`trustProxy`), the last X-Forwarded-For
- * entry: the one the proxy added, not one the client sent. IPv6 is grouped by /64.
+ * The address to rate-limit on. With `ipHeader` (e.g. cf-connecting-ip behind a Cloudflare Tunnel),
+ * that header. Behind a reverse proxy (`trustProxy`), the last X-Forwarded-For entry: the one the
+ * proxy added, not one the client sent. Otherwise the socket's. IPv6 is grouped by /64.
  */
-export function clientKey(req: IncomingMessage, trustProxy: boolean): string {
+export function clientKey(req: IncomingMessage, trustProxy: boolean, ipHeader?: string): string {
   let ip = req.socket.remoteAddress ?? '';
   const xff = req.headers['x-forwarded-for'];
-  if (trustProxy && typeof xff === 'string' && xff.trim()) ip = xff.split(',').at(-1)!.trim();
+  const fromHeader = ipHeader ? req.headers[ipHeader.toLowerCase()] : undefined;
+  if (typeof fromHeader === 'string' && fromHeader.trim()) ip = fromHeader.split(',')[0]!.trim();
+  else if (trustProxy && typeof xff === 'string' && xff.trim()) ip = xff.split(',').at(-1)!.trim();
   ip = ip.replace(/^::ffff:(?=\d+\.\d+\.\d+\.\d+$)/i, '').replace(/%.*$/, '');
   if (!isIPv6(ip)) return ip;
   const groups = ipv6Groups(ip).map((g) => (/^[0-9a-f]{1,4}$/i.test(g) ? parseInt(g, 16).toString(16) : '0'));

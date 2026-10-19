@@ -95,6 +95,14 @@ describe('clientKey', () => {
     expect(clientKey(req('172.18.0.3'), true)).toBe('172.18.0.3');
   });
 
+  it('with an IP header (Cloudflare: cf-connecting-ip), uses that and ignores X-Forwarded-For', () => {
+    const cf = (ip: string | undefined, xff?: string) =>
+      ({ socket: { remoteAddress: '172.18.0.3' }, headers: { ...(ip ? { 'cf-connecting-ip': ip } : {}), ...(xff ? { 'x-forwarded-for': xff } : {}) } }) as unknown as IncomingMessage;
+    expect(clientKey(cf('198.51.100.1', '6.6.6.6'), false, 'cf-connecting-ip')).toBe('198.51.100.1');
+    expect(clientKey(cf('2001:db8:1:2::9'), false, 'cf-connecting-ip')).toBe('2001:db8:1:2::/64');
+    expect(clientKey(cf(undefined, '6.6.6.6'), false, 'cf-connecting-ip')).toBe('172.18.0.3');
+  });
+
   it('groups IPv6 by /64, since one user gets a whole /64', () => {
     expect(clientKey(req('2001:db8:1:2:aaaa::1'), false)).toBe('2001:db8:1:2::/64');
     expect(clientKey(req('2001:db8:1:2:ffff:ffff:ffff:ffff'), false)).toBe('2001:db8:1:2::/64');

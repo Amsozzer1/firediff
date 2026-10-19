@@ -137,6 +137,13 @@ describe('playground --hosted', () => {
     expect((await u.post(small, { 'x-forwarded-for': '198.51.100.2' })).status).toBe(429);
   });
 
+  it('keys the limit on --ip-header when given', async () => {
+    const s = await start(ok, { limits: { perMinute: 1 }, ipHeader: 'cf-connecting-ip' });
+    expect((await s.post(small, { 'cf-connecting-ip': '198.51.100.1' })).status).toBe(200);
+    expect((await s.post(small, { 'cf-connecting-ip': '198.51.100.2', 'x-forwarded-for': '198.51.100.1' })).status).toBe(200);
+    expect((await s.post(small, { 'cf-connecting-ip': '198.51.100.1', 'x-forwarded-for': '198.51.100.3' })).status).toBe(429);
+  });
+
   it('runs one comparison at a time with 5 waiting, and answers 429 past that', async () => {
     let release = () => {};
     const gate = new Promise<void>((r) => (release = r));
