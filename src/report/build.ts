@@ -162,10 +162,6 @@ function isOwned(path: string, seeds: Seed[]): boolean {
   return Object.values(data).some((v) => v === OWNER_UID || (Array.isArray(v) && v.includes(OWNER_UID)));
 }
 
-function countConditions(model: RuleModel): number {
-  return model.matches.flatMap((b) => b.allows).filter((a) => a.conditionLoc && a.condition.kind !== 'literal').length;
-}
-
 /**
  * Split Not-exercised entries: those inside an allow whose text changed between base and head go to
  * "changed but never tested"; the rest stay in the Not-exercised list.
@@ -190,18 +186,11 @@ function splitUntested(unexercised: Unexercised[] | null, skips: Skip[], base: R
   return { changedUntested, rest };
 }
 
-function notExercisedItems(unexercised: Unexercised[] | null, skips: Skip[], errors: Row[], head: RuleModel, hadChangedUntested: boolean): NotExercisedItem[] {
+function notExercisedItems(unexercised: Unexercised[] | null, skips: Skip[], errors: Row[]): NotExercisedItem[] {
   const items: NotExercisedItem[] = [];
+  // When every allow condition was reached and nothing was skipped, this stays empty and the
+  // report leaves the section out.
   if (unexercised === null) items.push({ line: null, text: 'Coverage was unavailable, so expressions that never evaluated true are not listed.' });
-  else if (unexercised.length === 0 && !hadChangedUntested) {
-    const n = countConditions(head);
-    items.push({
-      line: null,
-      text: n
-        ? `All ${n} allow condition${n === 1 ? '' : 's'} in head ${n === 1 ? 'was' : 'were'} reached by at least one request.`
-        : 'Head has no allow conditions other than literal true or false.',
-    });
-  }
   for (const u of unexercised ?? []) {
     items.push({ line: u.line, text: `\`${u.text}\` ${u.kind === 'never-evaluated' ? 'was never evaluated' : 'never evaluated true'}` });
   }
@@ -260,13 +249,7 @@ export function buildReport(r: PairResult): Report {
     changedUntested,
     timeChanges: r.timeChanges ?? [],
     lowCoverage: lowCoverage(r),
-    notExercised: notExercisedItems(
-      r.notExercised === null ? null : rest.unexercised,
-      rest.skips,
-      errors,
-      r.head,
-      changedUntested.some((c) => !c.why.startsWith('not tried')),
-    ),
+    notExercised: notExercisedItems(r.notExercised === null ? null : rest.unexercised, rest.skips, errors),
     errors,
   };
 }

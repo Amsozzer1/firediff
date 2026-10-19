@@ -121,6 +121,7 @@ From top to bottom:
 7. **Couldn't test**: flips that depend on something firediff can't provide, such as an App Check
    token or a profile doc it didn't seed. Each entry names the missing piece.
 8. **Not exercised**: everything else that was never true, plus requests firediff knowingly doesn't try.
+   Left out when every allow condition was reached and nothing was skipped.
 9. **Proof** (collapsed): per row, the replayable request and why the base side denied it
    (`denied by L13 isOwner(uid) (false)`).
 

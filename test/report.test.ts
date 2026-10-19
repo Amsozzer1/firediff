@@ -5,7 +5,7 @@ import { notExercised } from '../src/coverage/coverage.js';
 import { canText, collapse, groupFlips, whoText, type Group } from '../src/diff/group.js';
 import { buildPlan, findSkips } from '../src/generate/index.js';
 import { parseRules } from '../src/parse/index.js';
-import { buildReport, denialText, renderMarkdown, truncate, MAX_CHARS } from '../src/report/index.js';
+import { buildReport, denialText, renderMarkdown, renderText, truncate, MAX_CHARS } from '../src/report/index.js';
 import { patternFor } from '../src/report/build.js';
 import type { PairResult } from '../src/run/pipeline.js';
 import { rulesPathFromFirebaseJson } from '../src/run/firebase-json.js';
@@ -42,7 +42,9 @@ describe('collapse', () => {
     expect(who(P.stranger, P.owner, P.other, P.admin)).toBe('any signed-in user'));
   it('other user without stranger → other users (claims covered, owner kept)', () => {
     expect(who(P.other, P.admin)).toBe('other users');
-    expect(who(P.other, P.owner)).toBe('other users, the owner');
+    // Other users plus the owner is every signed-in user, unless a stranger still lacks the access.
+    expect(who(P.other, P.owner)).toBe('any signed-in user');
+    expect(whoText(collapse([P.other, P.owner], ORDER, new Set([P.stranger.name])))).toBe('other users, the owner');
   });
   it('otherwise names the claim and role principals, in plan order', () =>
     expect(who(P.editor, P.admin)).toBe("users whose token has admin == true, users whose doc at teams/t1/members/{uid} has role == 'editor'"));
@@ -135,6 +137,17 @@ describe('groupFlips', () => {
     ]);
   });
 
+  it('merges other users and the owner into any signed-in user only when no stranger still lacks the access', () => {
+    const probe = (path: string): Request => ({ op: 'get', path, probe: 'missing' });
+    // The stranger's probe hit their own doc, which they could already read: they don't count against it.
+    const own = groupFlips([gained(P.other, probe('w/u_s')), gained(P.owner, probe('w/u_s')), same(P.stranger, probe('w/u_s'))], ORDER).gained;
+    expect(whoText(own[0]!.who)).toBe('any signed-in user');
+    // A stranger still denied the same request: not everyone signed in gained it.
+    const denied = { case: { principal: P.stranger, request: probe('w/u_s') }, base: deny, head: deny };
+    const not = groupFlips([gained(P.other, probe('w/u_s')), gained(P.owner, probe('w/u_s')), denied], ORDER).gained;
+    expect(whoText(not[0]!.who)).toBe('other users, the owner');
+  });
+
   it('picks the proof request from the broadest principal, most severe op first', () => {
     const rows = [
       gained(P.owner, req.delete('w/1')),
@@ -143,7 +156,7 @@ describe('groupFlips', () => {
       gained(P.other, req.delete('w/1')),
     ];
     const [g] = groupFlips(rows, ORDER).gained;
-    expect(whoText(g!.who)).toBe('other users, the owner');
+    expect(whoText(g!.who)).toBe('any signed-in user'); // no stranger sent these, so other users + owner = everyone signed in
     expect([g!.proof.case.principal.name, g!.proof.case.request.op]).toEqual(['other user', 'delete']);
   });
 });
@@ -272,7 +285,8 @@ describe('markdown', () => {
   const result = (rows: Row[]): PairResult => ({ base, head, plan, cases: rows.map((r) => r.case), rows, notExercised: [], coverage: null, skips: [], timeChanges: [], ms: { plan: 0, open: 0, run: 0 } });
 
   it('puts title, gained table, lost details, not exercised, proof details in that order', () => {
-    const md = renderMarkdown(buildReport(result([gained(P.stranger, req.get('users/u_owner')), lost(P.owner, req.delete('users/u_owner'))])));
+    const r = result([gained(P.stranger, req.get('users/u_owner')), lost(P.owner, req.delete('users/u_owner'))]);
+    const md = renderMarkdown(buildReport({ ...r, notExercised: [{ line: 14, column: 23, text: 'isOwner(uid)', kind: 'never-true' }] }));
     const at = (s: string) => md.indexOf(s);
     expect(md.startsWith('### firediff · 2 access changes\n')).toBe(true);
     expect(at('| Who | Can now | On |')).toBeGreaterThan(0);
@@ -280,6 +294,16 @@ describe('markdown', () => {
     expect(at('**Not exercised**')).toBeGreaterThan(at('Lost access'));
     expect(at('<details><summary>Proof (2)</summary>')).toBeGreaterThan(at('**Not exercised**'));
     expect(md).not.toMatch(/\| Proof/);
+  });
+
+  it('leaves out Not exercised when every allow condition was reached and nothing was skipped', () => {
+    const report = buildReport(result([gained(P.stranger, req.get('users/u_owner'))]));
+    expect(report.notExercised).toEqual([]);
+    expect(renderMarkdown(report)).not.toContain('Not exercised');
+    expect(renderText(report)).not.toContain('Not exercised');
+    // Coverage it couldn't read is still worth saying.
+    const unknown = buildReport({ ...result([]), notExercised: null });
+    expect(renderMarkdown(unknown)).toContain('**Not exercised**');
   });
 
   it('says how many requests ran when nothing changed, and never claims safety', () => {

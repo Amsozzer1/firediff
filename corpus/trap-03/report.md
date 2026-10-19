@@ -10,7 +10,6 @@
 
 **Not exercised**
 
-- All 2 allow conditions in head were reached by at least one request.
 - L13 not tried: list rule reads `{memberId}`, the document id; a collection query can't satisfy that, so only the deny side of list is tested here
 
 <details><summary>Proof (1)</summary>

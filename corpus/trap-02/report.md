@@ -4,10 +4,6 @@
 |---|---|---|
 | any signed-in user | write any doc | `config/{key}` |
 
-**Not exercised**
-
-- All 2 allow conditions in head were reached by at least one request.
-
 <details><summary>Proof (1)</summary>
 
 **1. any signed-in user can now write any doc · `config/{key}`**

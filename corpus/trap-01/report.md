@@ -5,11 +5,7 @@
 | any signed-in user | list all docs | `users` |
 | any signed-in user | read another user's doc | `users/{uid}` |
 | the owner | update their own doc (role) | `users/{uid}` |
-| other users, the owner | read docs that don't exist yet | `users/{uid}` |
-
-**Not exercised**
-
-- All 3 allow conditions in head were reached by at least one request.
+| any signed-in user | read docs that don't exist yet | `users/{uid}` |
 
 <details><summary>Proof (4)</summary>
 
@@ -91,7 +87,7 @@ Base: denied by L15 `isOwner(uid) && !request.resource.data.diff(resource.data).
 }
 ```
 
-**4. other users, the owner can now read docs that don't exist yet · `users/{uid}`**
+**4. any signed-in user can now read docs that don't exist yet · `users/{uid}`**
 
 Base: denied by L13 `isOwner(uid)` (false)
 

@@ -6,7 +6,6 @@
 
 **Not exercised**
 
-- All 4 allow conditions in head were reached by at least one request.
 - L5 not tried: list rule reads `{uid}`, the document id; a collection query can't satisfy that, so only the deny side of list is tested here
 
 <details><summary>Proof (1)</summary>

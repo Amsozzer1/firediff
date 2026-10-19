@@ -91,9 +91,11 @@ export function renderMarkdown(report: Report): string {
     out.push('');
   }
 
-  out.push('**Not exercised**', '');
-  for (const n of report.notExercised) out.push(`- ${n.line !== null ? `L${n.line} ` : ''}${n.text}`);
-  out.push('');
+  if (report.notExercised.length) {
+    out.push('**Not exercised**', '');
+    for (const n of report.notExercised) out.push(`- ${n.line !== null ? `L${n.line} ` : ''}${n.text}`);
+    out.push('');
+  }
 
   const rows = [...report.gained, ...report.lost, ...report.dataChanged];
   if (rows.length) {

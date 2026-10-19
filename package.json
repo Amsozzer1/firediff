@@ -1,6 +1,6 @@
 {
   "name": "@amsozzer/firediff",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Diff Firestore security rules by behavior: runs the old and new rules in the Firestore emulator and reports who gained or lost access. CLI and GitHub Action.",
   "keywords": [
     "firestore",

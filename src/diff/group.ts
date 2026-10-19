@@ -53,11 +53,18 @@ export function direction(r: Row): Direction | null {
   return null;
 }
 
-/** Collapse the principals that flipped to the broadest classes, never listing one a broader class covers. */
-export function collapse(principals: Principal[], order: Principal[]): Who[] {
+/**
+ * Collapse the principals that flipped to the broadest classes, never listing one a broader class
+ * covers. `excluded` names principals that sent the same request and ended up without the access
+ * the flipped ones have (still denied for a gain, still allowed for a loss).
+ */
+export function collapse(principals: Principal[], order: Principal[], excluded?: Set<string>): Who[] {
   const names = new Set(principals.map((p) => p.name));
   if (names.has(SIGNED_OUT)) return [{ kind: 'anyone' }];
   if (names.has(STRANGER)) return [{ kind: 'signed-in' }];
+  // Other users and the owner together are every signed-in user, unless a stranger is excluded.
+  // (A stranger who already had the access, e.g. on their own doc, doesn't count against it.)
+  if (names.has(OTHER) && names.has(OWNER) && !excluded?.has(STRANGER)) return [{ kind: 'signed-in' }];
   const owner: Who[] = names.has(OWNER) ? [{ kind: 'owner' }] : [];
   if (names.has(OTHER)) return [{ kind: 'other-users' }, ...owner];
   const flipped = order.filter((p) => names.has(p.name) && !BASE_NAMES.has(p.name));
@@ -92,7 +99,21 @@ function principalRank(p: Principal, order: Principal[]): number {
  * on the same path whose classes match. Gained and lost are each ranked: tier, then op, then path.
  */
 export function groupFlips(rows: Row[], principals: Principal[]): { gained: Group[]; lost: Group[] } {
-  const buckets = new Map<string, { direction: Direction; path: string; op: Op; listKind?: 'all' | 'own'; probe?: 'missing'; rows: Row[] }>();
+  const buckets = new Map<string, { direction: Direction; path: string; op: Op; listKind?: 'all' | 'own'; probe?: 'missing'; rows: Row[]; tested: string }>();
+  const requestKey = (r: Row) => {
+    const req = r.case.request;
+    return JSON.stringify([groupTarget(req), req.op, req.op === 'list' ? (req.where?.length ? 'own' : 'all') : undefined, req.probe]);
+  };
+  // Per request, who ended up on each side in head (including the rows that didn't flip).
+  const headResults = new Map<string, Map<string, Row['head']['result']>>();
+  for (const r of rows) {
+    const k = requestKey(r);
+    let m = headResults.get(k);
+    if (!m) headResults.set(k, (m = new Map()));
+    m.set(r.case.principal.name, r.head.result);
+  }
+  const excludedFor = (key: string, d: Direction) =>
+    new Set([...(headResults.get(key) ?? [])].filter(([, res]) => res !== (d === 'gained' ? 'allow' : 'deny')).map(([name]) => name));
   for (const r of rows) {
     const d = direction(r);
     if (!d) continue;
@@ -101,14 +122,14 @@ export function groupFlips(rows: Row[], principals: Principal[]): { gained: Grou
     const listKind = req.op === 'list' ? (req.where?.length ? 'own' : 'all') : undefined;
     const k = JSON.stringify([d, path, req.op, listKind, req.probe]);
     let b = buckets.get(k);
-    if (!b) buckets.set(k, (b = { direction: d, path, op: req.op, ...(listKind ? { listKind } : {}), ...(req.probe ? { probe: req.probe } : {}), rows: [] }));
+    if (!b) buckets.set(k, (b = { direction: d, path, op: req.op, ...(listKind ? { listKind } : {}), ...(req.probe ? { probe: req.probe } : {}), rows: [], tested: requestKey(r) }));
     b.rows.push(r);
   }
 
   const merged = new Map<string, Group>();
   for (const b of buckets.values()) {
     const flipped = [...new Map(b.rows.map((r) => [r.case.principal.name, r.case.principal])).values()];
-    const who = collapse(flipped, principals);
+    const who = collapse(flipped, principals, excludedFor(b.tested, b.direction));
     const k = JSON.stringify([b.direction, b.path, whoKey(who), b.listKind, b.probe]);
     let g = merged.get(k);
     if (!g) {

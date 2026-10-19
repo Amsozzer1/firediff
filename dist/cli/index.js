@@ -147182,10 +147182,11 @@ function direction(r) {
   if (r.base.result === "allow" && r.head.result === "deny") return "lost";
   return null;
 }
-function collapse(principals, order) {
+function collapse(principals, order, excluded) {
   const names = new Set(principals.map((p) => p.name));
   if (names.has(SIGNED_OUT)) return [{ kind: "anyone" }];
   if (names.has(STRANGER)) return [{ kind: "signed-in" }];
+  if (names.has(OTHER) && names.has(OWNER) && !excluded?.has(STRANGER)) return [{ kind: "signed-in" }];
   const owner = names.has(OWNER) ? [{ kind: "owner" }] : [];
   if (names.has(OTHER)) return [{ kind: "other-users" }, ...owner];
   const flipped = order.filter((p) => names.has(p.name) && !BASE_NAMES.has(p.name));
@@ -147207,6 +147208,18 @@ function principalRank(p, order) {
 }
 function groupFlips(rows, principals) {
   const buckets = /* @__PURE__ */ new Map();
+  const requestKey2 = (r) => {
+    const req = r.case.request;
+    return JSON.stringify([groupTarget(req), req.op, req.op === "list" ? req.where?.length ? "own" : "all" : void 0, req.probe]);
+  };
+  const headResults = /* @__PURE__ */ new Map();
+  for (const r of rows) {
+    const k = requestKey2(r);
+    let m = headResults.get(k);
+    if (!m) headResults.set(k, m = /* @__PURE__ */ new Map());
+    m.set(r.case.principal.name, r.head.result);
+  }
+  const excludedFor = (key2, d) => new Set([...headResults.get(key2) ?? []].filter(([, res]) => res !== (d === "gained" ? "allow" : "deny")).map(([name]) => name));
   for (const r of rows) {
     const d = direction(r);
     if (!d) continue;
@@ -147215,13 +147228,13 @@ function groupFlips(rows, principals) {
     const listKind = req.op === "list" ? req.where?.length ? "own" : "all" : void 0;
     const k = JSON.stringify([d, path, req.op, listKind, req.probe]);
     let b = buckets.get(k);
-    if (!b) buckets.set(k, b = { direction: d, path, op: req.op, ...listKind ? { listKind } : {}, ...req.probe ? { probe: req.probe } : {}, rows: [] });
+    if (!b) buckets.set(k, b = { direction: d, path, op: req.op, ...listKind ? { listKind } : {}, ...req.probe ? { probe: req.probe } : {}, rows: [], tested: requestKey2(r) });
     b.rows.push(r);
   }
   const merged = /* @__PURE__ */ new Map();
   for (const b of buckets.values()) {
     const flipped = [...new Map(b.rows.map((r) => [r.case.principal.name, r.case.principal])).values()];
-    const who = collapse(flipped, principals);
+    const who = collapse(flipped, principals, excludedFor(b.tested, b.direction));
     const k = JSON.stringify([b.direction, b.path, whoKey(who), b.listKind, b.probe]);
     let g = merged.get(k);
     if (!g) {
@@ -147549,9 +147562,6 @@ function isOwned(path, seeds) {
   const data2 = seeds.find((s) => s.path === path)?.data ?? {};
   return Object.values(data2).some((v) => v === OWNER_UID || Array.isArray(v) && v.includes(OWNER_UID));
 }
-function countConditions(model) {
-  return model.matches.flatMap((b) => b.allows).filter((a) => a.conditionLoc && a.condition.kind !== "literal").length;
-}
 function splitUntested(unexercised, skips, base, head2) {
   const changed = changedAllows(base, head2);
   const ranges = allowRanges(head2);
@@ -147571,16 +147581,9 @@ function splitUntested(unexercised, skips, base, head2) {
   changedUntested.sort((a, b) => a.line - b.line);
   return { changedUntested, rest };
 }
-function notExercisedItems(unexercised, skips, errors, head2, hadChangedUntested) {
+function notExercisedItems(unexercised, skips, errors) {
   const items = [];
   if (unexercised === null) items.push({ line: null, text: "Coverage was unavailable, so expressions that never evaluated true are not listed." });
-  else if (unexercised.length === 0 && !hadChangedUntested) {
-    const n = countConditions(head2);
-    items.push({
-      line: null,
-      text: n ? `All ${n} allow condition${n === 1 ? "" : "s"} in head ${n === 1 ? "was" : "were"} reached by at least one request.` : "Head has no allow conditions other than literal true or false."
-    });
-  }
   for (const u of unexercised ?? []) {
     items.push({ line: u.line, text: `\`${u.text}\` ${u.kind === "never-evaluated" ? "was never evaluated" : "never evaluated true"}` });
   }
@@ -147637,13 +147640,7 @@ function buildReport(r) {
     changedUntested,
     timeChanges: r.timeChanges ?? [],
     lowCoverage: lowCoverage(r),
-    notExercised: notExercisedItems(
-      r.notExercised === null ? null : rest.unexercised,
-      rest.skips,
-      errors,
-      r.head,
-      changedUntested.some((c) => !c.why.startsWith("not tried"))
-    ),
+    notExercised: notExercisedItems(r.notExercised === null ? null : rest.unexercised, rest.skips, errors),
     errors
   };
 }
@@ -147768,9 +147765,11 @@ function renderMarkdown(report) {
     for (const c of report.couldntTest) out.push(`- ${esc(c.who)} \xB7 ${esc(c.can)} \xB7 ${code(c.on)}: head needs ${esc(c.missing)}`);
     out.push("");
   }
-  out.push("**Not exercised**", "");
-  for (const n of report.notExercised) out.push(`- ${n.line !== null ? `L${n.line} ` : ""}${n.text}`);
-  out.push("");
+  if (report.notExercised.length) {
+    out.push("**Not exercised**", "");
+    for (const n of report.notExercised) out.push(`- ${n.line !== null ? `L${n.line} ` : ""}${n.text}`);
+    out.push("");
+  }
   const rows = [...report.gained, ...report.lost, ...report.dataChanged];
   if (rows.length) {
     out.push(`<details><summary>Proof (${rows.length})</summary>`, "");
@@ -147813,9 +147812,11 @@ function renderText(report) {
   if (report.lost.length) out.push("Lost", ...table3(report.lost), "");
   if (report.dataChanged.length) out.push("Accepted data changed", ...report.dataChanged.map((r) => `  ${r.who}  ${dataText(r)}  ${r.on}`), "");
   if (report.couldntTest.length) out.push("Couldn't test", ...report.couldntTest.map((c) => `  ${c.who}  ${c.can}  ${c.on}: head needs ${c.missing}`), "");
-  out.push("Not exercised");
-  for (const n of report.notExercised) out.push(`  ${n.line !== null ? `L${n.line} ` : ""}${n.text}`);
-  out.push("");
+  if (report.notExercised.length) {
+    out.push("Not exercised");
+    for (const n of report.notExercised) out.push(`  ${n.line !== null ? `L${n.line} ` : ""}${n.text}`);
+    out.push("");
+  }
   const rows = [...report.gained, ...report.lost, ...report.dataChanged];
   if (rows.length) {
     out.push("Proof");

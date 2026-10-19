@@ -26,9 +26,11 @@ export function renderText(report: Report): string {
   if (report.lost.length) out.push('Lost', ...table(report.lost), '');
   if (report.dataChanged.length) out.push('Accepted data changed', ...report.dataChanged.map((r) => `  ${r.who}  ${dataText(r)}  ${r.on}`), '');
   if (report.couldntTest.length) out.push("Couldn't test", ...report.couldntTest.map((c) => `  ${c.who}  ${c.can}  ${c.on}: head needs ${c.missing}`), '');
-  out.push('Not exercised');
-  for (const n of report.notExercised) out.push(`  ${n.line !== null ? `L${n.line} ` : ''}${n.text}`);
-  out.push('');
+  if (report.notExercised.length) {
+    out.push('Not exercised');
+    for (const n of report.notExercised) out.push(`  ${n.line !== null ? `L${n.line} ` : ''}${n.text}`);
+    out.push('');
+  }
   const rows = [...report.gained, ...report.lost, ...report.dataChanged];
   if (rows.length) {
     out.push('Proof');
