@@ -104,21 +104,9 @@ export async function emulatorJar(): Promise<string> {
   return jar;
 }
 
-/**
- * Run `fn` against a Firestore emulator: the one in FIRESTORE_EMULATOR_HOST if set, otherwise a
- * fresh one (Java 21, multi-project mode) on a free port, stopped afterwards.
- */
-export async function withEmulator<T>(fn: (emulator: EmulatorAddress) => Promise<T>): Promise<T> {
-  const fromEnv = process.env.FIRESTORE_EMULATOR_HOST;
-  if (fromEnv) {
-    const i = fromEnv.lastIndexOf(':');
-    return fn({ host: fromEnv.slice(0, i), port: Number(fromEnv.slice(i + 1)) });
-  }
-
-  const javaHome = findJava21();
-  const jar = await emulatorJar();
-  const [port, websocketPort] = await Promise.all([freePort(), freePort()]);
-  const args = [
+/** The emulator's command line. Both ports bind to 127.0.0.1 only. */
+export function emulatorArgs(jar: string, port: number, websocketPort: number): string[] {
+  return [
     '-Dgoogle.cloud_firestore.debug_log_level=FINE',
     '-Duser.language=en',
     '-jar', jar,
@@ -129,25 +117,89 @@ export async function withEmulator<T>(fn: (emulator: EmulatorAddress) => Promise
     // Several projects (fd-base-*, fd-head-*) in one emulator, each with its own rules.
     '--single_project_mode', 'false',
   ];
+}
+
+/** Resident memory of a process in bytes, or null if it can't be read. */
+function rssBytes(pid: number): number | null {
+  try {
+    const kb = /^VmRSS:\s+(\d+) kB/m.exec(readFileSync(`/proc/${pid}/status`, 'utf8'));
+    if (kb) return Number(kb[1]) * 1024;
+  } catch {
+    // not Linux
+  }
+  try {
+    const kb = Number(execFileSync('ps', ['-o', 'rss=', '-p', String(pid)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim());
+    return Number.isFinite(kb) && kb > 0 ? kb * 1024 : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A running emulator started by firediff. */
+export interface EmulatorProcess {
+  address: EmulatorAddress;
+  pid: number;
+  /** Resolves when the process exits, for whatever reason. */
+  exit: Promise<void>;
+  exited(): boolean;
+  rssBytes(): number | null;
+  /** SIGTERM, then SIGKILL after 10 s; resolves once it has exited. */
+  stop(): Promise<void>;
+}
+
+/** Start a Firestore emulator (Java 21, multi-project mode) on free localhost ports; resolves once it answers. */
+export async function startEmulator(): Promise<EmulatorProcess> {
+  const javaHome = findJava21();
+  const jar = await emulatorJar();
+  const [port, websocketPort] = await Promise.all([freePort(), freePort()]);
 
   let log = '';
-  const child = spawn(join(javaHome, 'bin', 'java'), args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(join(javaHome, 'bin', 'java'), emulatorArgs(jar, port, websocketPort), { stdio: ['ignore', 'pipe', 'pipe'] });
   const keep = (b: Buffer) => {
     log = (log + b.toString()).slice(-4000);
   };
   child.stdout.on('data', keep);
   child.stderr.on('data', keep);
-  const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+  const exit = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+  const stop = async () => {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill('SIGTERM');
+      const timer = setTimeout(() => child.kill('SIGKILL'), 10_000);
+      await exit;
+      clearTimeout(timer);
+    }
+  };
 
   try {
     await waitReady(`http://127.0.0.1:${port}/`, child, () => log);
-    return await fn({ host: '127.0.0.1', port });
+  } catch (e) {
+    await stop();
+    throw e;
+  }
+  return {
+    address: { host: '127.0.0.1', port },
+    pid: child.pid!,
+    exit,
+    exited: () => child.exitCode !== null || child.signalCode !== null,
+    rssBytes: () => rssBytes(child.pid!),
+    stop,
+  };
+}
+
+/**
+ * Run `fn` against a Firestore emulator: the one in FIRESTORE_EMULATOR_HOST if set, otherwise a
+ * fresh one, stopped afterwards.
+ */
+export async function withEmulator<T>(fn: (emulator: EmulatorAddress) => Promise<T>): Promise<T> {
+  const fromEnv = process.env.FIRESTORE_EMULATOR_HOST;
+  if (fromEnv) {
+    const i = fromEnv.lastIndexOf(':');
+    return fn({ host: fromEnv.slice(0, i), port: Number(fromEnv.slice(i + 1)) });
+  }
+  const emulator = await startEmulator();
+  try {
+    return await fn(emulator.address);
   } finally {
-    if (child.exitCode === null) {
-      child.kill('SIGTERM');
-      const timer = setTimeout(() => child.kill('SIGKILL'), 10_000);
-      await exited;
-      clearTimeout(timer);
-    }
+    await emulator.stop();
   }
 }

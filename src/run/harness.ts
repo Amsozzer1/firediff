@@ -151,13 +151,14 @@ export class RulesPair {
     return res.json();
   }
 
-  /** Sends every case to both projects in lockstep, starting from the same seeded state. */
-  async run(cases: Case[], seeds: Seed[]): Promise<Row[]> {
+  /** Sends every case to both projects in lockstep, starting from the same seeded state. Stops between cases once `signal` aborts. */
+  async run(cases: Case[], seeds: Seed[], signal?: AbortSignal): Promise<Row[]> {
     const seedByPath = new Map(seeds.map((s) => [s.path, s]));
     await Promise.all([this.base.seed(seeds), this.head.seed(seeds)]);
 
     const rows: Row[] = [];
     for (const c of cases) {
+      signal?.throwIfAborted();
       const req = c.request;
       // A create has to target a doc that doesn't exist (set() on an existing doc is an update).
       if (req.op === 'create' && seedByPath.has(req.path)) {

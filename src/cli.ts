@@ -1,10 +1,12 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import type { Server } from 'node:http';
 import { parseArgs } from 'node:util';
 import { buildPlan, ConfigError, expandCases, formatPlan, loadConfig, type Config } from './generate/index.js';
 import { parseRules, RulesParseError, type RuleModel } from './parse/index.js';
 import { GitHubError, pullRequestFromEnv, upsertComment } from './github/comment.js';
-import { emulatorDiff, listen } from './playground/server.js';
+import { EmulatorSupervisor, healthReport, hostMemory, HOSTED_LIMITS } from './playground/hosted.js';
+import { emulatorDiff, listen, runDiff, startWarmEmulator } from './playground/server.js';
 import { buildReport, renderJson, renderMarkdown, renderText } from './report/index.js';
 import { EmulatorError, withEmulator } from './run/emulator.js';
 import { FirebaseJsonError, rulesPathFromFirebaseJson } from './run/firebase-json.js';
@@ -15,6 +17,9 @@ const USAGE = `usage:
   firediff --since <git-ref> [options]           compare <ref>:<rules> with the working tree
   firediff plan <base.rules> <head.rules> [--config firediff.yml] [--format text|json]
   firediff playground [--port 8787] [--host 127.0.0.1]   paste two rules files in a local web page
+  firediff playground --hosted [--trust-proxy] [--max-requests 600] [--timeout 5]
+                                                 the same page for a public server: size, request
+                                                 and rate limits, and a self-restarting emulator
 
 options:
   --format md|json|text      output format (default md)
@@ -134,20 +139,60 @@ async function run(args: string[]): Promise<number> {
   return failOn === 'never' ? 0 : failOn === 'any' ? Number(any) : Number(gained);
 }
 
+/** Resolves on Ctrl-C or SIGTERM, once the server has closed. */
+function untilStopped(server: Server): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const stop = () => server.close(() => resolve());
+    process.once('SIGINT', stop);
+    process.once('SIGTERM', stop);
+  });
+}
+
 async function playground(args: string[]): Promise<number> {
-  const { values } = parseArgs({ args, options: { port: { type: 'string', default: '8787' }, host: { type: 'string', default: '127.0.0.1' } } });
+  const { values } = parseArgs({
+    args,
+    options: {
+      port: { type: 'string', default: '8787' },
+      host: { type: 'string', default: '127.0.0.1' },
+      hosted: { type: 'boolean', default: false },
+      'trust-proxy': { type: 'boolean', default: false },
+      'max-requests': { type: 'string' },
+      timeout: { type: 'string' },
+    },
+  });
   const port = Number(values.port);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new UsageError(`bad --port ${values.port}`);
-  await withEmulator(async (emulator) => {
-    const server = await listen(emulatorDiff(emulator), port, values.host!);
-    const { port: actual } = server.address() as { port: number };
-    process.stderr.write(`firediff playground: http://${values.host}:${actual}/  (Ctrl-C to stop)\n`);
-    await new Promise<void>((resolve) => {
-      const stop = () => server.close(() => resolve());
-      process.once('SIGINT', stop);
-      process.once('SIGTERM', stop);
+  if (!values.hosted) {
+    if (values['trust-proxy'] || values['max-requests'] || values.timeout) throw new UsageError('--trust-proxy, --max-requests and --timeout go with --hosted');
+    await withEmulator(async (emulator) => {
+      const server = await listen(emulatorDiff(emulator), port, values.host!);
+      const { port: actual } = server.address() as { port: number };
+      process.stderr.write(`firediff playground: http://${values.host}:${actual}/  (Ctrl-C to stop)\n`);
+      await untilStopped(server);
     });
+    return 0;
+  }
+
+  const limits = { ...HOSTED_LIMITS };
+  if (values['max-requests'] !== undefined) {
+    limits.maxRequests = Number(values['max-requests']);
+    if (!Number.isInteger(limits.maxRequests) || limits.maxRequests < 1) throw new UsageError(`bad --max-requests ${values['max-requests']}`);
+  }
+  if (values.timeout !== undefined) {
+    limits.timeoutMs = Number(values.timeout) * 1000;
+    if (!(limits.timeoutMs > 0)) throw new UsageError(`bad --timeout ${values.timeout} (seconds)`);
+  }
+  // The supervisor owns its emulator (it restarts it), so FIRESTORE_EMULATOR_HOST isn't used here.
+  const log = (line: string) => process.stderr.write(`${new Date().toISOString()} ${line}\n`);
+  const supervisor = new EmulatorSupervisor(startWarmEmulator, runDiff, limits, log);
+  await supervisor.start();
+  const server = await listen(supervisor.diff, port, values.host!, {
+    hosted: { limits, trustProxy: values['trust-proxy'], health: () => healthReport(supervisor.status(), hostMemory(), limits), log },
   });
+  const { port: actual } = server.address() as { port: number };
+  log(`firediff playground (hosted): http://${values.host}:${actual}/  ${limits.maxRequests} requests, ${limits.timeoutMs / 1000} s per comparison`);
+  await untilStopped(server);
+  await supervisor.stop();
   return 0;
 }
 

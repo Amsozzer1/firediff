@@ -46900,6 +46900,10 @@ var e={d:(t,n)=>{for(var s in n)e.o(n,s)&&!e.o(t,s)&&Object.defineProperty(t,s,{
 var ajv = __nccwpck_require__(2822);
 // EXTERNAL MODULE: ./node_modules/.pnpm/yaml@2.9.1/node_modules/yaml/dist/index.js
 var dist = __nccwpck_require__(1950);
+// EXTERNAL MODULE: external "net"
+var external_net_ = __nccwpck_require__(9278);
+// EXTERNAL MODULE: external "crypto"
+var external_crypto_ = __nccwpck_require__(6982);
 // EXTERNAL MODULE: external "http"
 var external_http_ = __nccwpck_require__(8611);
 ;// CONCATENATED MODULE: ./node_modules/.pnpm/marked@15.0.12/node_modules/marked/lib/marked.esm.js
@@ -49074,8 +49078,10 @@ var lexer = _Lexer.lex;
 
 //# sourceMappingURL=marked.esm.js.map
 
-// EXTERNAL MODULE: external "crypto"
-var external_crypto_ = __nccwpck_require__(6982);
+// EXTERNAL MODULE: external "os"
+var external_os_ = __nccwpck_require__(3238);
+// EXTERNAL MODULE: external "path"
+var external_path_ = __nccwpck_require__(6928);
 ;// CONCATENATED MODULE: ./node_modules/.pnpm/@firebase+util@1.15.3/node_modules/@firebase/util/dist/postinstall.mjs
 const getDefaultsFromPostinstall = () => (undefined);
 
@@ -127484,12 +127490,6 @@ function assertSucceeds(pr) {
 
 //# sourceMappingURL=index.mjs.map
 
-// EXTERNAL MODULE: external "net"
-var external_net_ = __nccwpck_require__(9278);
-// EXTERNAL MODULE: external "os"
-var external_os_ = __nccwpck_require__(3238);
-// EXTERNAL MODULE: external "path"
-var external_path_ = __nccwpck_require__(6928);
 ;// CONCATENATED MODULE: ./.build/bin.js
 
 // src/cli.ts
@@ -146890,7 +146890,256 @@ ${markdown}`;
   return { action: "created", url: created.html_url };
 }
 
+// src/playground/hosted.ts
+
+
+var HOSTED_LIMITS = {
+  /** Per rules file. */
+  rulesBytes: 64 * 1024,
+  configBytes: 8 * 1024,
+  /** Generated requests per comparison; bigger matrices are turned away before they run. */
+  maxRequests: 600,
+  timeoutMs: 5e3,
+  /** Comparisons per client address (IPv6: per /64). */
+  perMinute: 10,
+  perDay: 100,
+  /** Comparisons waiting behind the one that's running. */
+  queue: 5,
+  /** Replace the emulator after this many comparisons, or once it uses more memory than this. */
+  restartEvery: 500,
+  restartRssBytes: 1.5 * 1024 ** 3
+};
+var MINUTE = 6e4;
+var DAY = 24 * 60 * MINUTE;
+var MAX_KEYS = 1e5;
+var RateLimiter = class {
+  constructor(perMinute, perDay, now = Date.now) {
+    this.perMinute = perMinute;
+    this.perDay = perDay;
+    this.now = now;
+  }
+  perMinute;
+  perDay;
+  now;
+  hits = /* @__PURE__ */ new Map();
+  get size() {
+    return this.hits.size;
+  }
+  take(key2) {
+    const t = this.now();
+    let e = this.hits.get(key2);
+    if (!e || t - e.dayStart >= DAY) {
+      if (!e && this.hits.size >= MAX_KEYS) this.sweep();
+      e = { recent: [], dayStart: t, day: 0 };
+      this.hits.set(key2, e);
+    }
+    e.recent = e.recent.filter((x) => t - x < MINUTE);
+    if (e.day >= this.perDay) {
+      return {
+        ok: false,
+        retryAfterSec: Math.ceil((e.dayStart + DAY - t) / 1e3),
+        message: `The hosted playground allows ${this.perDay} comparisons a day per address. Run it locally: npx firediff playground`
+      };
+    }
+    if (e.recent.length >= this.perMinute) {
+      const wait = Math.ceil((e.recent[0] + MINUTE - t) / 1e3);
+      return { ok: false, retryAfterSec: wait, message: `The hosted playground allows ${this.perMinute} comparisons a minute per address. Try again in ${wait} s.` };
+    }
+    e.recent.push(t);
+    e.day++;
+    return { ok: true };
+  }
+  sweep() {
+    const t = this.now();
+    for (const [k, e] of this.hits) if (t - e.dayStart >= DAY) this.hits.delete(k);
+    for (const k of this.hits.keys()) {
+      if (this.hits.size < MAX_KEYS) break;
+      this.hits.delete(k);
+    }
+  }
+};
+function ipv6Groups(ip) {
+  const [head, tail] = ip.split("::");
+  const h = head ? head.split(":") : [];
+  if (tail === void 0) return h;
+  const t = tail ? tail.split(":") : [];
+  return [...h, ...Array(8 - h.length - t.length).fill("0"), ...t];
+}
+function clientKey(req, trustProxy) {
+  let ip = req.socket.remoteAddress ?? "";
+  const xff = req.headers["x-forwarded-for"];
+  if (trustProxy && typeof xff === "string" && xff.trim()) ip = xff.split(",").at(-1).trim();
+  ip = ip.replace(/^::ffff:(?=\d+\.\d+\.\d+\.\d+$)/i, "").replace(/%.*$/, "");
+  if (!(0,external_net_.isIPv6)(ip)) return ip;
+  const groups = ipv6Groups(ip).map((g) => /^[0-9a-f]{1,4}$/i.test(g) ? parseInt(g, 16).toString(16) : "0");
+  return `${groups.slice(0, 4).join(":")}::/64`;
+}
+var QueueFullError = class extends Error {
+  name = "QueueFullError";
+};
+var RunQueue = class {
+  constructor(maxWaiting) {
+    this.maxWaiting = maxWaiting;
+  }
+  maxWaiting;
+  tail = Promise.resolve();
+  pending = 0;
+  /** Running plus waiting. */
+  get size() {
+    return this.pending;
+  }
+  run(fn) {
+    if (this.pending > this.maxWaiting) return Promise.reject(new QueueFullError(`queue full (${this.pending})`));
+    this.pending++;
+    const p = this.tail.then(fn).finally(() => {
+      this.pending--;
+    });
+    this.tail = p.catch(() => void 0);
+    return p;
+  }
+};
+var DiffTimeoutError = class extends Error {
+  constructor(timeoutMs) {
+    super(`comparison took longer than ${timeoutMs / 1e3} s`);
+    this.timeoutMs = timeoutMs;
+  }
+  timeoutMs;
+  name = "DiffTimeoutError";
+};
+var EmulatorSupervisor = class {
+  constructor(startEmulator2, runDiff2, limits, log = () => {
+  }) {
+    this.startEmulator = startEmulator2;
+    this.runDiff = runDiff2;
+    this.limits = limits;
+    this.log = log;
+  }
+  startEmulator;
+  runDiff;
+  limits;
+  log;
+  current = null;
+  handle = null;
+  state = "down";
+  runsOnThis = 0;
+  runs = 0;
+  restarts = 0;
+  stopping = false;
+  /** Start the first emulator (otherwise the first comparison does). */
+  async start() {
+    await this.ready();
+  }
+  diff = async (base, head, config2) => {
+    const em = await this.ready();
+    const ac = new AbortController();
+    const run2 = this.runDiff(em.address, base, head, config2, ac.signal);
+    run2.catch(() => void 0);
+    let timer;
+    const timedOut = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new DiffTimeoutError(this.limits.timeoutMs)), this.limits.timeoutMs);
+    });
+    try {
+      return await Promise.race([run2, timedOut]);
+    } catch (e) {
+      if (e instanceof DiffTimeoutError) {
+        ac.abort(e);
+        if (this.handle === em) this.restart("a comparison timed out");
+      }
+      throw e;
+    } finally {
+      clearTimeout(timer);
+      this.runs++;
+      this.runsOnThis++;
+      if (this.handle === em && !em.exited()) {
+        const rss = em.rssBytes();
+        if (this.runsOnThis >= this.limits.restartEvery) this.restart(`${this.runsOnThis} comparisons`);
+        else if (rss !== null && rss > this.limits.restartRssBytes) this.restart(`emulator at ${Math.round(rss / 2 ** 20)} MB`);
+      }
+    }
+  };
+  status() {
+    const up = this.handle !== null && !this.handle.exited();
+    return {
+      emulator: up ? "up" : this.state === "down" ? "down" : "starting",
+      runs: this.runs,
+      restarts: this.restarts,
+      rssBytes: up ? this.handle.rssBytes() : null
+    };
+  }
+  async stop() {
+    this.stopping = true;
+    this.handle = null;
+    await this.current?.then(
+      (h) => h.stop(),
+      () => void 0
+    );
+  }
+  ready() {
+    if (this.handle?.exited()) this.restart("the emulator exited");
+    else if (!this.current || this.state === "down") this.current = this.launch();
+    return this.current;
+  }
+  launch() {
+    this.state = "starting";
+    const p = this.startEmulator().then(
+      (h) => {
+        this.handle = h;
+        this.runsOnThis = 0;
+        this.state = "up";
+        void h.exit.then(() => {
+          if (this.handle === h && !this.stopping) this.restart("the emulator exited");
+        });
+        return h;
+      },
+      (e) => {
+        this.state = "down";
+        this.log(`emulator failed to start: ${e.message}`);
+        throw e;
+      }
+    );
+    p.catch(() => void 0);
+    return p;
+  }
+  restart(reason) {
+    if (this.stopping) return;
+    const old = this.handle;
+    this.handle = null;
+    this.restarts++;
+    this.state = "starting";
+    this.log(`restarting the emulator: ${reason}`);
+    const p = (old ? old.stop().catch(() => void 0) : Promise.resolve()).then(() => this.launch());
+    p.catch(() => void 0);
+    this.current = p;
+  }
+};
+function hostMemory() {
+  try {
+    const info = (0,external_fs_.readFileSync)("/proc/meminfo", "utf8");
+    const kb2 = (name) => Number(new RegExp(`^${name}:\\s+(\\d+) kB`, "m").exec(info)?.[1]);
+    const ratio = kb2("MemAvailable") / kb2("MemTotal");
+    return { availableRatio: Number.isFinite(ratio) ? ratio : null };
+  } catch {
+    return { availableRatio: null };
+  }
+}
+function healthReport(s, mem, limits) {
+  const problems = [];
+  if (s.emulator === "down") problems.push("emulator down");
+  if (mem.availableRatio !== null && mem.availableRatio < 0.1) problems.push(`low memory: ${Math.round(mem.availableRatio * 100)}% available`);
+  if (s.rssBytes !== null && s.rssBytes > limits.restartRssBytes) problems.push(`emulator at ${Math.round(s.rssBytes / 2 ** 20)} MB`);
+  return {
+    ok: problems.length === 0,
+    problems,
+    emulator: s.emulator,
+    runs: s.runs,
+    restarts: s.restarts,
+    emulatorMB: s.rssBytes === null ? null : Math.round(s.rssBytes / 2 ** 20),
+    memoryAvailablePct: mem.availableRatio === null ? null : Math.round(mem.availableRatio * 100)
+  };
+}
+
 // src/playground/server.ts
+
 
 
 
@@ -147557,6 +147806,180 @@ function renderText(report) {
   return out.join("\n");
 }
 
+// src/run/emulator.ts
+
+
+
+
+
+
+var EmulatorError = class extends Error {
+  name = "EmulatorError";
+};
+var READY_TIMEOUT_MS = 9e4;
+function isJava21(home) {
+  try {
+    return (0,external_fs_.existsSync)((0,external_path_.join)(home, "bin", "java")) && /^JAVA_VERSION="21[."]/m.test((0,external_fs_.readFileSync)((0,external_path_.join)(home, "release"), "utf8"));
+  } catch {
+    return false;
+  }
+}
+function findJava21() {
+  const candidates = [];
+  if (process.env.JAVA_HOME) candidates.push(process.env.JAVA_HOME);
+  try {
+    candidates.push((0,external_child_process_namespaceObject.execFileSync)("/usr/libexec/java_home", ["-v", "21"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim());
+  } catch {
+  }
+  candidates.push("/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home", "/opt/homebrew/opt/openjdk@21", "/usr/local/opt/openjdk@21");
+  try {
+    for (const d of (0,external_fs_.readdirSync)("/usr/lib/jvm")) candidates.push((0,external_path_.join)("/usr/lib/jvm", d));
+  } catch {
+  }
+  const found = candidates.find(isJava21);
+  if (!found) throw new EmulatorError("Java 21 not found (the Firestore emulator needs it). Install it with: brew install openjdk@21");
+  return found;
+}
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const srv = (0,external_net_.createServer)();
+    srv.unref();
+    srv.on("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const { port } = srv.address();
+      srv.close(() => resolve(port));
+    });
+  });
+}
+async function waitReady(url, child, output) {
+  const deadline = Date.now() + READY_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null) throw new EmulatorError(`Firestore emulator exited (${child.exitCode}):
+${output()}`);
+    try {
+      if ((await fetch(url)).ok) return;
+    } catch {
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  throw new EmulatorError(`Firestore emulator not ready after ${READY_TIMEOUT_MS / 1e3}s:
+${output()}`);
+}
+var EMULATOR_JAR = {
+  version: "1.22.0",
+  url: "https://storage.googleapis.com/firebase-preview-drop/emulator/cloud-firestore-emulator-v1.22.0.jar",
+  size: 136707194,
+  sha256: "9b6498b7f62714d67f48f59b3818883cd682dbcd46b9f59511de81c97bb5166c",
+  /** Same place firebase-tools caches it, so either tool reuses the other's download. */
+  path: (0,external_path_.join)((0,external_os_.homedir)(), ".cache", "firebase", "emulators", "cloud-firestore-emulator-v1.22.0.jar")
+};
+async function emulatorJar() {
+  const jar = process.env.FIREDIFF_EMULATOR_JAR || EMULATOR_JAR.path;
+  if ((0,external_fs_.existsSync)(jar) && (0,external_fs_.statSync)(jar).size === EMULATOR_JAR.size) return jar;
+  if (process.env.FIREDIFF_EMULATOR_JAR) throw new EmulatorError(`FIREDIFF_EMULATOR_JAR ${jar} is missing or the wrong size`);
+  process.stderr.write(`firediff: downloading the Firestore emulator v${EMULATOR_JAR.version} (${Math.round(EMULATOR_JAR.size / 1e6)} MB, once)
+`);
+  (0,external_fs_.mkdirSync)((0,external_path_.dirname)(jar), { recursive: true });
+  const res = await fetch(EMULATOR_JAR.url);
+  if (!res.ok || !res.body) throw new EmulatorError(`downloading ${EMULATOR_JAR.url} failed: HTTP ${res.status}`);
+  const tmp = `${jar}.${process.pid}.part`;
+  const hash = (0,external_crypto_.createHash)("sha256");
+  const out = (0,external_fs_.createWriteStream)(tmp);
+  try {
+    for await (const chunk of res.body) {
+      hash.update(chunk);
+      if (!out.write(chunk)) await new Promise((r) => out.once("drain", () => r()));
+    }
+    await new Promise((resolve, reject) => out.end((err) => err ? reject(err) : resolve()));
+    const digest = hash.digest("hex");
+    if (digest !== EMULATOR_JAR.sha256) throw new EmulatorError(`emulator download checksum mismatch (${digest})`);
+    (0,external_fs_.renameSync)(tmp, jar);
+  } finally {
+    (0,external_fs_.rmSync)(tmp, { force: true });
+  }
+  return jar;
+}
+function emulatorArgs(jar, port, websocketPort) {
+  return [
+    "-Dgoogle.cloud_firestore.debug_log_level=FINE",
+    "-Duser.language=en",
+    "-jar",
+    jar,
+    "--host",
+    "127.0.0.1",
+    "--port",
+    String(port),
+    "--websocket_port",
+    String(websocketPort),
+    "--project_id",
+    "demo-firediff",
+    // Several projects (fd-base-*, fd-head-*) in one emulator, each with its own rules.
+    "--single_project_mode",
+    "false"
+  ];
+}
+function rssBytes(pid) {
+  try {
+    const kb2 = /^VmRSS:\s+(\d+) kB/m.exec((0,external_fs_.readFileSync)(`/proc/${pid}/status`, "utf8"));
+    if (kb2) return Number(kb2[1]) * 1024;
+  } catch {
+  }
+  try {
+    const kb2 = Number((0,external_child_process_namespaceObject.execFileSync)("ps", ["-o", "rss=", "-p", String(pid)], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim());
+    return Number.isFinite(kb2) && kb2 > 0 ? kb2 * 1024 : null;
+  } catch {
+    return null;
+  }
+}
+async function startEmulator() {
+  const javaHome = findJava21();
+  const jar = await emulatorJar();
+  const [port, websocketPort] = await Promise.all([freePort(), freePort()]);
+  let log = "";
+  const child = (0,external_child_process_namespaceObject.spawn)((0,external_path_.join)(javaHome, "bin", "java"), emulatorArgs(jar, port, websocketPort), { stdio: ["ignore", "pipe", "pipe"] });
+  const keep = (b) => {
+    log = (log + b.toString()).slice(-4e3);
+  };
+  child.stdout.on("data", keep);
+  child.stderr.on("data", keep);
+  const exit = new Promise((resolve) => child.once("exit", () => resolve()));
+  const stop = async () => {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGTERM");
+      const timer = setTimeout(() => child.kill("SIGKILL"), 1e4);
+      await exit;
+      clearTimeout(timer);
+    }
+  };
+  try {
+    await waitReady(`http://127.0.0.1:${port}/`, child, () => log);
+  } catch (e) {
+    await stop();
+    throw e;
+  }
+  return {
+    address: { host: "127.0.0.1", port },
+    pid: child.pid,
+    exit,
+    exited: () => child.exitCode !== null || child.signalCode !== null,
+    rssBytes: () => rssBytes(child.pid),
+    stop
+  };
+}
+async function withEmulator(fn) {
+  const fromEnv = process.env.FIRESTORE_EMULATOR_HOST;
+  if (fromEnv) {
+    const i = fromEnv.lastIndexOf(":");
+    return fn({ host: fromEnv.slice(0, i), port: Number(fromEnv.slice(i + 1)) });
+  }
+  const emulator = await startEmulator();
+  try {
+    return await fn(emulator.address);
+  } finally {
+    await emulator.stop();
+  }
+}
+
 // src/run/pipeline.ts
 
 
@@ -147743,12 +148166,13 @@ var RulesPair = class _RulesPair {
     if (!res.ok) throw new Error(`ruleCoverage ${res.status} for ${this.ids[side]}`);
     return res.json();
   }
-  /** Sends every case to both projects in lockstep, starting from the same seeded state. */
-  async run(cases, seeds) {
+  /** Sends every case to both projects in lockstep, starting from the same seeded state. Stops between cases once `signal` aborts. */
+  async run(cases, seeds, signal) {
     const seedByPath = new Map(seeds.map((s) => [s.path, s]));
     await Promise.all([this.base.seed(seeds), this.head.seed(seeds)]);
     const rows = [];
     for (const c of cases) {
+      signal?.throwIfAborted();
       const req = c.request;
       if (req.op === "create" && seedByPath.has(req.path)) {
         await Promise.all([this.base.restore(req.path, void 0), this.head.restore(req.path, void 0)]);
@@ -147853,7 +148277,7 @@ function timeLimitChanges(base, head, headModel) {
 
 // src/run/pipeline.ts
 var fromFile = (file) => ({ label: file, source: stripBom((0,external_fs_.readFileSync)(file, "utf8")) });
-async function runPair(base, head, emulator, config2 = {}) {
+async function runPair(base, head, emulator, config2 = {}, signal) {
   const t0 = performance.now();
   const baseModel = parseRules(base.source, base.label);
   const headModel = parseRules(head.source, head.label);
@@ -147863,10 +148287,11 @@ async function runPair(base, head, emulator, config2 = {}) {
   const baseSrc = stripBom(base.source);
   const headSrc = stripBom(head.source);
   const timeChanges = timeLimitChanges(findTimeLimits(baseSrc, baseModel), findTimeLimits(headSrc, headModel), headModel);
+  signal?.throwIfAborted();
   const pair = await RulesPair.open(neutralizeTimeLimits(baseSrc), neutralizeTimeLimits(headSrc), emulator);
   const t2 = performance.now();
   try {
-    const rows = await pair.run(cases, plan2.seeds);
+    const rows = await pair.run(cases, plan2.seeds, signal);
     const t3 = performance.now();
     let unexercised = null;
     let cov = null;
@@ -147922,7 +148347,12 @@ var EXAMPLE_HEAD = EXAMPLE_BASE.replace("allow read: if isOwner(uid);", "allow r
   "allow update: if isOwner(uid);"
 );
 var json2 = (v) => JSON.stringify(v).replace(/</g, "\\u003c");
-function playgroundPage() {
+function about(hosted) {
+  if (!hosted) return "Runs on a local emulator.";
+  return `Runs in a Firestore emulator on this server; nothing is stored. Up to ${hosted.rulesBytes / 1024} KB per file and ${hosted.maxRequests} requests.
+    For bigger files, run <code>npx firediff</code> (<a href="https://github.com/Amsozzer1/firediff">GitHub</a>).`;
+}
+function playgroundPage(hosted) {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -147939,6 +148369,7 @@ function playgroundPage() {
   header { padding: 16px; border-bottom: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; }
   header h1 { font-size: 18px; margin: 0; }
   header p { margin: 0; color: var(--muted); }
+  header a { color: inherit; }
   main { padding: 16px; display: grid; gap: 16px; max-width: 1400px; margin: 0 auto; }
   .editors { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; }
   @media (max-width: 800px) { .editors { grid-template-columns: 1fr; } }
@@ -147968,7 +148399,7 @@ function playgroundPage() {
 <body>
 <header>
   <h1>firediff playground</h1>
-  <p>Paste two versions of a Firestore rules file to see who the change lets in (or out). Runs on a local emulator.</p>
+  <p>Paste two versions of a Firestore rules file to see who the change lets in (or out). ${about(hosted)}</p>
 </header>
 <main>
   <div class="editors">
@@ -148037,214 +148468,151 @@ function playgroundPage() {
 
 // src/playground/server.ts
 var MAX_BODY = 512 * 1024;
-function emulatorDiff(emulator) {
-  return async (base, head, config2) => {
-    const result = await runPair({ label: "base.rules", source: base }, { label: "head.rules", source: head }, emulator, config2);
-    const report = buildReport(result);
-    return { markdown: renderMarkdown(report), counts: { gained: report.gained.length, lost: report.lost.length, requests: report.requests } };
-  };
+var LOCALLY = "Run it locally: npx firediff base.rules head.rules";
+var runDiff = async (emulator, base, head, config2, signal) => {
+  const result = await runPair({ label: "base.rules", source: base }, { label: "head.rules", source: head }, emulator, config2, signal);
+  const report = buildReport(result);
+  return { markdown: renderMarkdown(report), counts: { gained: report.gained.length, lost: report.lost.length, requests: report.requests } };
+};
+async function startWarmEmulator() {
+  const em = await startEmulator();
+  try {
+    await runDiff(em.address, EXAMPLE_BASE, EXAMPLE_HEAD, {});
+  } catch (e) {
+    await em.stop();
+    throw e;
+  }
+  return em;
 }
-function send(res, status, type, body) {
-  res.writeHead(status, { "content-type": type, "cache-control": "no-store", "x-content-type-options": "nosniff" });
+function emulatorDiff(emulator) {
+  return (base, head, config2) => runDiff(emulator, base, head, config2);
+}
+function send(res, status, type, body, headers = {}) {
+  res.writeHead(status, { "content-type": type, "cache-control": "no-store", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", ...headers });
   res.end(body);
 }
-function readBody(req) {
+var sendJson = (res, status, body, headers = {}) => send(res, status, "application/json", JSON.stringify(body), headers);
+var BodyTooLarge = class extends Error {
+};
+function readBody(req, max) {
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks = [];
     req.on("data", (c) => {
       size += c.length;
-      if (size > MAX_BODY) {
-        reject(new Error("too large"));
-        req.destroy();
-      } else chunks.push(c);
+      if (size > max) reject(new BodyTooLarge());
+      else chunks.push(c);
     });
     req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
     req.on("error", reject);
   });
 }
-function playgroundHandler(diff) {
-  let queue = Promise.resolve();
-  return async (req, res) => {
-    const url = new URL(req.url ?? "/", "http://localhost");
-    if (req.method === "GET" && url.pathname === "/") return send(res, 200, "text/html; charset=utf-8", playgroundPage());
-    if (url.pathname !== "/api/diff") return send(res, 404, "application/json", JSON.stringify({ error: "not found" }));
-    if (req.method !== "POST") return send(res, 405, "application/json", JSON.stringify({ error: "use POST" }));
+function contentSecurityPolicy(page) {
+  const script = /<script>([\s\S]*?)<\/script>/.exec(page)[1];
+  const hash = (0,external_crypto_.createHash)("sha256").update(script).digest("base64");
+  return [
+    "default-src 'none'",
+    `script-src 'sha256-${hash}'`,
+    "style-src 'unsafe-inline'",
+    "connect-src 'self'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'"
+  ].join("; ");
+}
+var kb = (bytes) => Math.ceil(bytes / 1024);
+function playgroundHandler(diff, options = {}) {
+  const hosted = options.hosted;
+  const limits = hosted ? { ...HOSTED_LIMITS, ...hosted.limits } : null;
+  const limiter = limits ? new RateLimiter(limits.perMinute, limits.perDay, hosted.now) : null;
+  const queue = new RunQueue(limits ? limits.queue : Infinity);
+  const maxBody = limits ? 2 * (2 * limits.rulesBytes + limits.configBytes) + 4096 : MAX_BODY;
+  const page = playgroundPage(limits ?? void 0);
+  const csp = contentSecurityPolicy(page);
+  const log = hosted?.log ?? (() => {
+  });
+  async function compare(req, res) {
+    if (limiter) {
+      const t = limiter.take(clientKey(req, hosted.trustProxy ?? false));
+      if (!t.ok) return sendJson(res, 429, { error: t.message }, { "retry-after": String(t.retryAfterSec) });
+    }
     let input;
     try {
-      input = JSON.parse(await readBody(req));
-    } catch {
-      return send(res, 400, "application/json", JSON.stringify({ error: `Send JSON {base, head, config?} under ${MAX_BODY / 1024} KB.` }));
+      input = JSON.parse(await readBody(req, maxBody));
+    } catch (e) {
+      if (e instanceof BodyTooLarge) return sendJson(res, 413, { error: `Send under ${kb(maxBody)} KB.` }, { connection: "close" });
+      return sendJson(res, 400, { error: `Send JSON {base, head, config?} under ${kb(maxBody)} KB.` });
     }
     if (typeof input.base !== "string" || typeof input.head !== "string") {
-      return send(res, 400, "application/json", JSON.stringify({ error: "base and head must be rules text" }));
+      return sendJson(res, 400, { error: "base and head must be rules text" });
     }
     const base = input.base;
     const head = input.head;
+    const configText = typeof input.config === "string" ? input.config : "";
+    if (limits) {
+      for (const [name, text] of [["base.rules", base], ["head.rules", head]]) {
+        const size = Buffer.byteLength(text);
+        if (size > limits.rulesBytes) {
+          return sendJson(res, 413, { error: `${name} is ${kb(size)} KB; the hosted playground takes up to ${kb(limits.rulesBytes)} KB per file. ${LOCALLY}` });
+        }
+      }
+      if (Buffer.byteLength(configText) > limits.configBytes) {
+        return sendJson(res, 413, { error: `firediff.yml is ${kb(Buffer.byteLength(configText))} KB; the hosted playground takes up to ${kb(limits.configBytes)} KB. ${LOCALLY}` });
+      }
+    }
     try {
-      parseRules(base, "base.rules");
-      parseRules(head, "head.rules");
-      const config2 = typeof input.config === "string" && input.config.trim() ? parseConfig(input.config, "firediff.yml") : {};
-      const run2 = queue.then(() => diff(base, head, config2));
-      queue = run2.catch(() => void 0);
-      const result = await run2;
+      const baseModel = parseRules(base, "base.rules");
+      const headModel = parseRules(head, "head.rules");
+      const config2 = configText.trim() ? parseConfig(configText, "firediff.yml") : {};
+      if (limits) {
+        const requests = expandCases(buildPlan(baseModel, headModel, config2)).length;
+        if (requests > limits.maxRequests) {
+          return sendJson(res, 413, { error: `These rules need ${requests} requests; the hosted playground runs up to ${limits.maxRequests}. ${LOCALLY}` });
+        }
+      }
+      const t0 = performance.now();
+      const result = await queue.run(() => diff(base, head, config2));
+      log(`compared: ${result.counts.requests} requests, ${Math.round(performance.now() - t0)} ms`);
       const html = await marked.parse(result.markdown, { gfm: true });
-      return send(res, 200, "application/json", JSON.stringify({ ...result, html }));
+      return sendJson(res, 200, { ...result, html });
     } catch (e) {
       if (e instanceof RulesParseError || e instanceof ConfigError) {
-        return send(res, 400, "application/json", JSON.stringify({ error: e.message, ...e instanceof RulesParseError ? { line: e.line, column: e.column } : {} }));
+        return sendJson(res, 400, { error: e.message, ...e instanceof RulesParseError ? { line: e.line, column: e.column } : {} });
       }
-      return send(res, 500, "application/json", JSON.stringify({ error: `firediff failed: ${e.message}` }));
+      if (e instanceof QueueFullError) {
+        return sendJson(res, 429, { error: "The playground is busy. Try again in a few seconds." }, { "retry-after": "5" });
+      }
+      if (e instanceof DiffTimeoutError) {
+        log(`timed out after ${e.timeoutMs} ms`);
+        return sendJson(res, 504, { error: `This comparison took longer than ${e.timeoutMs / 1e3} s, the hosted playground's limit. ${LOCALLY}` });
+      }
+      log(`failed: ${e.message}`);
+      return sendJson(res, 500, { error: `firediff failed: ${e.message}` });
     }
+  }
+  return async (req, res) => {
+    const url = new URL(req.url ?? "/", "http://localhost");
+    if (req.method === "GET" && url.pathname === "/") return send(res, 200, "text/html; charset=utf-8", page, { "content-security-policy": csp });
+    if (req.method === "GET" && url.pathname === "/healthz") {
+      const h = hosted?.health?.() ?? { ok: true, problems: [] };
+      return sendJson(res, h.ok ? 200 : 503, h);
+    }
+    if (url.pathname !== "/api/diff") return sendJson(res, 404, { error: "not found" });
+    if (req.method !== "POST") return sendJson(res, 405, { error: "use POST" });
+    return compare(req, res);
   };
 }
-function listen(diff, port, host) {
-  const handler = playgroundHandler(diff);
+function listen(diff, port, host, options = {}) {
+  const handler = playgroundHandler(diff, options);
   const server = (0,external_http_.createServer)((req, res) => void handler(req, res));
+  if (options.hosted) {
+    server.headersTimeout = 1e4;
+    server.requestTimeout = 15e3;
+  }
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, host, () => resolve(server));
   });
-}
-
-// src/run/emulator.ts
-
-
-
-
-
-
-var EmulatorError = class extends Error {
-  name = "EmulatorError";
-};
-var READY_TIMEOUT_MS = 9e4;
-function isJava21(home) {
-  try {
-    return (0,external_fs_.existsSync)((0,external_path_.join)(home, "bin", "java")) && /^JAVA_VERSION="21[."]/m.test((0,external_fs_.readFileSync)((0,external_path_.join)(home, "release"), "utf8"));
-  } catch {
-    return false;
-  }
-}
-function findJava21() {
-  const candidates = [];
-  if (process.env.JAVA_HOME) candidates.push(process.env.JAVA_HOME);
-  try {
-    candidates.push((0,external_child_process_namespaceObject.execFileSync)("/usr/libexec/java_home", ["-v", "21"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim());
-  } catch {
-  }
-  candidates.push("/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home", "/opt/homebrew/opt/openjdk@21", "/usr/local/opt/openjdk@21");
-  try {
-    for (const d of (0,external_fs_.readdirSync)("/usr/lib/jvm")) candidates.push((0,external_path_.join)("/usr/lib/jvm", d));
-  } catch {
-  }
-  const found = candidates.find(isJava21);
-  if (!found) throw new EmulatorError("Java 21 not found (the Firestore emulator needs it). Install it with: brew install openjdk@21");
-  return found;
-}
-function freePort() {
-  return new Promise((resolve, reject) => {
-    const srv = (0,external_net_.createServer)();
-    srv.unref();
-    srv.on("error", reject);
-    srv.listen(0, "127.0.0.1", () => {
-      const { port } = srv.address();
-      srv.close(() => resolve(port));
-    });
-  });
-}
-async function waitReady(url, child, output) {
-  const deadline = Date.now() + READY_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    if (child.exitCode !== null) throw new EmulatorError(`Firestore emulator exited (${child.exitCode}):
-${output()}`);
-    try {
-      if ((await fetch(url)).ok) return;
-    } catch {
-    }
-    await new Promise((r) => setTimeout(r, 250));
-  }
-  throw new EmulatorError(`Firestore emulator not ready after ${READY_TIMEOUT_MS / 1e3}s:
-${output()}`);
-}
-var EMULATOR_JAR = {
-  version: "1.22.0",
-  url: "https://storage.googleapis.com/firebase-preview-drop/emulator/cloud-firestore-emulator-v1.22.0.jar",
-  size: 136707194,
-  sha256: "9b6498b7f62714d67f48f59b3818883cd682dbcd46b9f59511de81c97bb5166c",
-  /** Same place firebase-tools caches it, so either tool reuses the other's download. */
-  path: (0,external_path_.join)((0,external_os_.homedir)(), ".cache", "firebase", "emulators", "cloud-firestore-emulator-v1.22.0.jar")
-};
-async function emulatorJar() {
-  const jar = process.env.FIREDIFF_EMULATOR_JAR || EMULATOR_JAR.path;
-  if ((0,external_fs_.existsSync)(jar) && (0,external_fs_.statSync)(jar).size === EMULATOR_JAR.size) return jar;
-  if (process.env.FIREDIFF_EMULATOR_JAR) throw new EmulatorError(`FIREDIFF_EMULATOR_JAR ${jar} is missing or the wrong size`);
-  process.stderr.write(`firediff: downloading the Firestore emulator v${EMULATOR_JAR.version} (${Math.round(EMULATOR_JAR.size / 1e6)} MB, once)
-`);
-  (0,external_fs_.mkdirSync)((0,external_path_.dirname)(jar), { recursive: true });
-  const res = await fetch(EMULATOR_JAR.url);
-  if (!res.ok || !res.body) throw new EmulatorError(`downloading ${EMULATOR_JAR.url} failed: HTTP ${res.status}`);
-  const tmp = `${jar}.${process.pid}.part`;
-  const hash = (0,external_crypto_.createHash)("sha256");
-  const out = (0,external_fs_.createWriteStream)(tmp);
-  try {
-    for await (const chunk of res.body) {
-      hash.update(chunk);
-      if (!out.write(chunk)) await new Promise((r) => out.once("drain", () => r()));
-    }
-    await new Promise((resolve, reject) => out.end((err) => err ? reject(err) : resolve()));
-    const digest = hash.digest("hex");
-    if (digest !== EMULATOR_JAR.sha256) throw new EmulatorError(`emulator download checksum mismatch (${digest})`);
-    (0,external_fs_.renameSync)(tmp, jar);
-  } finally {
-    (0,external_fs_.rmSync)(tmp, { force: true });
-  }
-  return jar;
-}
-async function withEmulator(fn) {
-  const fromEnv = process.env.FIRESTORE_EMULATOR_HOST;
-  if (fromEnv) {
-    const i = fromEnv.lastIndexOf(":");
-    return fn({ host: fromEnv.slice(0, i), port: Number(fromEnv.slice(i + 1)) });
-  }
-  const javaHome = findJava21();
-  const jar = await emulatorJar();
-  const [port, websocketPort] = await Promise.all([freePort(), freePort()]);
-  const args = [
-    "-Dgoogle.cloud_firestore.debug_log_level=FINE",
-    "-Duser.language=en",
-    "-jar",
-    jar,
-    "--host",
-    "127.0.0.1",
-    "--port",
-    String(port),
-    "--websocket_port",
-    String(websocketPort),
-    "--project_id",
-    "demo-firediff",
-    // Several projects (fd-base-*, fd-head-*) in one emulator, each with its own rules.
-    "--single_project_mode",
-    "false"
-  ];
-  let log = "";
-  const child = (0,external_child_process_namespaceObject.spawn)((0,external_path_.join)(javaHome, "bin", "java"), args, { stdio: ["ignore", "pipe", "pipe"] });
-  const keep = (b) => {
-    log = (log + b.toString()).slice(-4e3);
-  };
-  child.stdout.on("data", keep);
-  child.stderr.on("data", keep);
-  const exited = new Promise((resolve) => child.once("exit", () => resolve()));
-  try {
-    await waitReady(`http://127.0.0.1:${port}/`, child, () => log);
-    return await fn({ host: "127.0.0.1", port });
-  } finally {
-    if (child.exitCode === null) {
-      child.kill("SIGTERM");
-      const timer = setTimeout(() => child.kill("SIGKILL"), 1e4);
-      await exited;
-      clearTimeout(timer);
-    }
-  }
 }
 
 // src/run/firebase-json.ts
@@ -148273,6 +148641,9 @@ var USAGE = `usage:
   firediff --since <git-ref> [options]           compare <ref>:<rules> with the working tree
   firediff plan <base.rules> <head.rules> [--config firediff.yml] [--format text|json]
   firediff playground [--port 8787] [--host 127.0.0.1]   paste two rules files in a local web page
+  firediff playground --hosted [--trust-proxy] [--max-requests 600] [--timeout 5]
+                                                 the same page for a public server: size, request
+                                                 and rate limits, and a self-restarting emulator
 
 options:
   --format md|json|text      output format (default md)
@@ -148386,21 +148757,58 @@ async function run(args) {
   const any = gained || report.lost.length > 0 || report.timeChanges.length > 0;
   return failOn === "never" ? 0 : failOn === "any" ? Number(any) : Number(gained);
 }
+function untilStopped(server) {
+  return new Promise((resolve) => {
+    const stop = () => server.close(() => resolve());
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
+  });
+}
 async function playground(args) {
-  const { values } = (0,external_util_.parseArgs)({ args, options: { port: { type: "string", default: "8787" }, host: { type: "string", default: "127.0.0.1" } } });
+  const { values } = (0,external_util_.parseArgs)({
+    args,
+    options: {
+      port: { type: "string", default: "8787" },
+      host: { type: "string", default: "127.0.0.1" },
+      hosted: { type: "boolean", default: false },
+      "trust-proxy": { type: "boolean", default: false },
+      "max-requests": { type: "string" },
+      timeout: { type: "string" }
+    }
+  });
   const port = Number(values.port);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new UsageError(`bad --port ${values.port}`);
-  await withEmulator(async (emulator) => {
-    const server = await listen(emulatorDiff(emulator), port, values.host);
-    const { port: actual } = server.address();
-    process.stderr.write(`firediff playground: http://${values.host}:${actual}/  (Ctrl-C to stop)
+  if (!values.hosted) {
+    if (values["trust-proxy"] || values["max-requests"] || values.timeout) throw new UsageError("--trust-proxy, --max-requests and --timeout go with --hosted");
+    await withEmulator(async (emulator) => {
+      const server2 = await listen(emulatorDiff(emulator), port, values.host);
+      const { port: actual2 } = server2.address();
+      process.stderr.write(`firediff playground: http://${values.host}:${actual2}/  (Ctrl-C to stop)
 `);
-    await new Promise((resolve) => {
-      const stop = () => server.close(() => resolve());
-      process.once("SIGINT", stop);
-      process.once("SIGTERM", stop);
+      await untilStopped(server2);
     });
+    return 0;
+  }
+  const limits = { ...HOSTED_LIMITS };
+  if (values["max-requests"] !== void 0) {
+    limits.maxRequests = Number(values["max-requests"]);
+    if (!Number.isInteger(limits.maxRequests) || limits.maxRequests < 1) throw new UsageError(`bad --max-requests ${values["max-requests"]}`);
+  }
+  if (values.timeout !== void 0) {
+    limits.timeoutMs = Number(values.timeout) * 1e3;
+    if (!(limits.timeoutMs > 0)) throw new UsageError(`bad --timeout ${values.timeout} (seconds)`);
+  }
+  const log = (line) => process.stderr.write(`${(/* @__PURE__ */ new Date()).toISOString()} ${line}
+`);
+  const supervisor = new EmulatorSupervisor(startWarmEmulator, runDiff, limits, log);
+  await supervisor.start();
+  const server = await listen(supervisor.diff, port, values.host, {
+    hosted: { limits, trustProxy: values["trust-proxy"], health: () => healthReport(supervisor.status(), hostMemory(), limits), log }
   });
+  const { port: actual } = server.address();
+  log(`firediff playground (hosted): http://${values.host}:${actual}/  ${limits.maxRequests} requests, ${limits.timeoutMs / 1e3} s per comparison`);
+  await untilStopped(server);
+  await supervisor.stop();
   return 0;
 }
 async function main(argv) {

@@ -31,8 +31,17 @@ export interface PairResult {
   ms: { plan: number; open: number; run: number };
 }
 
-/** Parse both sides, generate the matrix, and run it against fd-base-<hash> and fd-head-<hash>. */
-export async function runPair(base: RulesSource, head: RulesSource, emulator: EmulatorAddress, config: Config = {}): Promise<PairResult> {
+/**
+ * Parse both sides, generate the matrix, and run it against fd-base-<hash> and fd-head-<hash>.
+ * Once `signal` aborts, it stops before the next request and rejects with its reason.
+ */
+export async function runPair(
+  base: RulesSource,
+  head: RulesSource,
+  emulator: EmulatorAddress,
+  config: Config = {},
+  signal?: AbortSignal,
+): Promise<PairResult> {
   const t0 = performance.now();
   const baseModel = parseRules(base.source, base.label);
   const headModel = parseRules(head.source, head.label);
@@ -42,10 +51,11 @@ export async function runPair(base: RulesSource, head: RulesSource, emulator: Em
   const baseSrc = stripBom(base.source);
   const headSrc = stripBom(head.source);
   const timeChanges = timeLimitChanges(findTimeLimits(baseSrc, baseModel), findTimeLimits(headSrc, headModel), headModel);
+  signal?.throwIfAborted();
   const pair = await RulesPair.open(neutralizeTimeLimits(baseSrc), neutralizeTimeLimits(headSrc), emulator);
   const t2 = performance.now();
   try {
-    const rows = await pair.run(cases, plan.seeds);
+    const rows = await pair.run(cases, plan.seeds, signal);
     const t3 = performance.now();
     let unexercised: Unexercised[] | null = null;
     let cov: AllowCoverage | null = null;

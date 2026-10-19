@@ -1,6 +1,7 @@
 import type { Server } from 'node:http';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { listen, type DiffFn } from '../src/playground/server.js';
+import { DiffTimeoutError } from '../src/playground/hosted.js';
+import { listen, type DiffFn, type PlaygroundOptions } from '../src/playground/server.js';
 
 const rules = (cond: string) => `rules_version = '2';
 service cloud.firestore {
@@ -64,5 +65,125 @@ describe('playground', () => {
     expect((await bad.json()).error).toMatch(/invalid config/);
     expect((await fetch(`${base}/api/diff`)).status).toBe(405);
     expect((await fetch(`${base}/nope`)).status).toBe(404);
+  });
+});
+
+describe('playground --hosted', () => {
+  const servers: Server[] = [];
+  afterAll(() => Promise.all(servers.map((s) => new Promise<void>((r) => s.close(() => r())))));
+
+  async function start(d: DiffFn, hosted: PlaygroundOptions['hosted']) {
+    const s = await listen(d, 0, '127.0.0.1', { hosted });
+    servers.push(s);
+    const url = `http://127.0.0.1:${(s.address() as { port: number }).port}`;
+    return {
+      url,
+      post: (body: unknown, headers: Record<string, string> = {}) =>
+        fetch(`${url}/api/diff`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) }),
+    };
+  }
+  const ok: DiffFn = async () => ({ markdown: 'ok', counts: { gained: 0, lost: 0, requests: 1 } });
+  const small = { base: rules('false'), head: rules('true') };
+
+  it('says on the page that it runs on a server and stores nothing', async () => {
+    const s = await start(ok, {});
+    const html = await (await fetch(`${s.url}/`)).text();
+    expect(html).toMatch(/nothing is stored/i);
+    expect(html).not.toMatch(/local emulator/);
+  });
+
+  it('rejects rules over 64 KB and config over 8 KB with 413, before running', async () => {
+    let ran = 0;
+    const s = await start(async (...a) => (ran++, ok(...a)), {});
+    const big = rules('true') + '\n//' + 'x'.repeat(64 * 1024);
+    const r1 = await s.post({ base: big, head: small.head });
+    expect(r1.status).toBe(413);
+    expect((await r1.json()).error).toMatch(/base\.rules is 65 KB.*up to 64 KB.*npx firediff/);
+    const r2 = await s.post({ ...small, config: '#' + 'x'.repeat(8 * 1024) });
+    expect(r2.status).toBe(413);
+    expect((await r2.json()).error).toMatch(/firediff\.yml.*up to 8 KB/);
+    expect(ran).toBe(0);
+    expect((await s.post(small)).status).toBe(200);
+  });
+
+  it('rejects rules whose matrix is over the request cap with 413', async () => {
+    let ran = 0;
+    const s = await start(async (...a) => (ran++, ok(...a)), { limits: { maxRequests: 3 } });
+    const r = await s.post(small);
+    expect(r.status).toBe(413);
+    expect((await r.json()).error).toMatch(/need \d+ requests; the hosted playground runs up to 3\. Run it locally: npx firediff/);
+    expect(ran).toBe(0);
+  });
+
+  it('rate limits per address: 10 a minute, with Retry-After', async () => {
+    let t = 0;
+    const s = await start(ok, { now: () => t });
+    for (let i = 0; i < 10; i++) expect((await s.post(small)).status).toBe(200);
+    const r = await s.post(small);
+    expect(r.status).toBe(429);
+    expect(r.headers.get('retry-after')).toBe('60');
+    expect((await r.json()).error).toMatch(/10 comparisons a minute/);
+    t += 60_000;
+    expect((await s.post(small)).status).toBe(200);
+  });
+
+  it('keys the limit on X-Forwarded-For only with --trust-proxy', async () => {
+    const s = await start(ok, { limits: { perMinute: 1 }, trustProxy: true });
+    expect((await s.post(small, { 'x-forwarded-for': '198.51.100.1' })).status).toBe(200);
+    expect((await s.post(small, { 'x-forwarded-for': '198.51.100.2' })).status).toBe(200);
+    expect((await s.post(small, { 'x-forwarded-for': '198.51.100.1' })).status).toBe(429);
+    const u = await start(ok, { limits: { perMinute: 1 } });
+    expect((await u.post(small, { 'x-forwarded-for': '198.51.100.1' })).status).toBe(200);
+    expect((await u.post(small, { 'x-forwarded-for': '198.51.100.2' })).status).toBe(429);
+  });
+
+  it('runs one comparison at a time with 5 waiting, and answers 429 past that', async () => {
+    let release = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    let running = 0;
+    let peak = 0;
+    const slow: DiffFn = async (...a) => {
+      running++;
+      peak = Math.max(peak, running);
+      await gate;
+      running--;
+      return ok(...a);
+    };
+    const s = await start(slow, {});
+    const all = Array.from({ length: 7 }, () => s.post(small));
+    const first = await Promise.race(all);
+    expect(first.status).toBe(429);
+    expect((await first.json()).error).toMatch(/busy/);
+    release();
+    const statuses = (await Promise.all(all)).map((r) => r.status).sort();
+    expect(statuses).toEqual([200, 200, 200, 200, 200, 200, 429]);
+    expect(peak).toBe(1);
+  });
+
+  it('answers 504 when the comparison runs past the time limit', async () => {
+    const s = await start(async () => Promise.reject(new DiffTimeoutError(5_000)), {});
+    const r = await s.post(small);
+    expect(r.status).toBe(504);
+    expect((await r.json()).error).toMatch(/longer than 5 s.*npx firediff/);
+  });
+
+  it('serves /healthz from the health check, 503 when it fails', async () => {
+    let healthy = true;
+    const s = await start(ok, { health: () => ({ ok: healthy, problems: healthy ? [] : ['emulator down'] }) });
+    const good = await fetch(`${s.url}/healthz`);
+    expect(good.status).toBe(200);
+    expect(await good.json()).toEqual({ ok: true, problems: [] });
+    healthy = false;
+    expect((await fetch(`${s.url}/healthz`)).status).toBe(503);
+  });
+
+  it('sends a content security policy that only allows the page itself', async () => {
+    const s = await start(ok, {});
+    const csp = (await fetch(`${s.url}/`)).headers.get('content-security-policy')!;
+    expect(csp).toMatch(/default-src 'none'/);
+    expect(csp).toMatch(/script-src 'sha256-[A-Za-z0-9+/=]+'/);
+    expect(csp).not.toMatch(/unsafe-inline'[^;]*script|script-src[^;]*unsafe-inline/);
+    expect(csp).toMatch(/connect-src 'self'/);
+    expect(csp).toMatch(/frame-ancestors 'none'/);
   });
 });

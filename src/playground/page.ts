@@ -1,5 +1,7 @@
+import type { HostedLimits } from './hosted.js';
+
 /** Built-in example: trap-01 (read opened to every signed-in user, role guard dropped). */
-const EXAMPLE_BASE = `rules_version = '2';
+export const EXAMPLE_BASE = `rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function isSignedIn() {
@@ -21,7 +23,7 @@ service cloud.firestore {
 }
 `;
 
-const EXAMPLE_HEAD = EXAMPLE_BASE.replace('allow read: if isOwner(uid);', 'allow read: if isSignedIn();').replace(
+export const EXAMPLE_HEAD = EXAMPLE_BASE.replace('allow read: if isOwner(uid);', 'allow read: if isSignedIn();').replace(
   `allow update: if isOwner(uid)
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']);`,
   'allow update: if isOwner(uid);',
@@ -29,8 +31,15 @@ const EXAMPLE_HEAD = EXAMPLE_BASE.replace('allow read: if isOwner(uid);', 'allow
 
 const json = (v: unknown) => JSON.stringify(v).replace(/</g, '\\u003c');
 
+/** What the header says about where the comparison runs. */
+function about(hosted?: HostedLimits): string {
+  if (!hosted) return 'Runs on a local emulator.';
+  return `Runs in a Firestore emulator on this server; nothing is stored. Up to ${hosted.rulesBytes / 1024} KB per file and ${hosted.maxRequests} requests.
+    For bigger files, run <code>npx firediff</code> (<a href="https://github.com/Amsozzer1/firediff">GitHub</a>).`;
+}
+
 /** The playground page: two editors, a Compare button, and the rendered report. No external resources. */
-export function playgroundPage(): string {
+export function playgroundPage(hosted?: HostedLimits): string {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -47,6 +56,7 @@ export function playgroundPage(): string {
   header { padding: 16px; border-bottom: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; }
   header h1 { font-size: 18px; margin: 0; }
   header p { margin: 0; color: var(--muted); }
+  header a { color: inherit; }
   main { padding: 16px; display: grid; gap: 16px; max-width: 1400px; margin: 0 auto; }
   .editors { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; }
   @media (max-width: 800px) { .editors { grid-template-columns: 1fr; } }
@@ -76,7 +86,7 @@ export function playgroundPage(): string {
 <body>
 <header>
   <h1>firediff playground</h1>
-  <p>Paste two versions of a Firestore rules file to see who the change lets in (or out). Runs on a local emulator.</p>
+  <p>Paste two versions of a Firestore rules file to see who the change lets in (or out). ${about(hosted)}</p>
 </header>
 <main>
   <div class="editors">
