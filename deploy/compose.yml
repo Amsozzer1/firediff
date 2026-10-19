@@ -1,0 +1,42 @@
+# The hosted playground behind Caddy (TLS). Run from this directory: docker compose up -d --build
+# Set PLAYGROUND_DOMAIN in deploy/.env (see .env.example).
+services:
+  firediff:
+    build: ..
+    image: firediff-playground
+    # --trust-proxy: rate limits key on the address Caddy forwards. The port is only reachable
+    # from Caddy (expose, not ports), so clients can't reach it directly to fake that header.
+    command: ["playground", "--hosted", "--trust-proxy", "--host", "0.0.0.0", "--port", "8787"]
+    expose: ["8787"]
+    restart: unless-stopped
+    init: true
+    environment:
+      # Cap the emulator's heap; if it runs out anyway it exits and firediff starts a new one.
+      JAVA_TOOL_OPTIONS: -Xmx1g -XX:+ExitOnOutOfMemoryError
+    mem_limit: 3g
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    logging:
+      driver: json-file
+      options: { max-size: 10m, max-file: "3" }
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      PLAYGROUND_DOMAIN: ${PLAYGROUND_DOMAIN:?set PLAYGROUND_DOMAIN in deploy/.env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [firediff]
+    logging:
+      driver: json-file
+      options: { max-size: 10m, max-file: "3" }
+
+volumes:
+  caddy_data:
+  caddy_config:

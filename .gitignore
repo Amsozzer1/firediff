@@ -5,3 +5,4 @@ firebase-debug.log
 .cache/
 firebase.alt*.json
 .build/
+deploy/.env
