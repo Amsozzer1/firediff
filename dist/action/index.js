@@ -146947,7 +146947,7 @@ var RateLimiter = class {
       return {
         ok: false,
         retryAfterSec: Math.ceil((e.dayStart + DAY - t) / 1e3),
-        message: `The hosted playground allows ${this.perDay} comparisons a day per address. Run it locally: npx firediff playground`
+        message: `The hosted playground allows ${this.perDay} comparisons a day per address. Run it locally: npx @amsozzer/firediff playground`
       };
     }
     if (e.recent.length >= this.perMinute) {
@@ -148359,7 +148359,7 @@ var json2 = (v) => JSON.stringify(v).replace(/</g, "\\u003c");
 function about(hosted) {
   if (!hosted) return "Runs on a local emulator.";
   return `Runs in a Firestore emulator on this server; nothing is stored. Up to ${hosted.rulesBytes / 1024} KB per file and ${hosted.maxRequests} requests.
-    For bigger files, run <code>npx firediff</code> (<a href="https://github.com/Amsozzer1/firediff">GitHub</a>).`;
+    For bigger files, run <code>npx @amsozzer/firediff</code> (<a href="https://github.com/Amsozzer1/firediff">GitHub</a>).`;
 }
 function playgroundPage(hosted) {
   return `<!doctype html>
@@ -148477,7 +148477,7 @@ function playgroundPage(hosted) {
 
 // src/playground/server.ts
 var MAX_BODY = 512 * 1024;
-var LOCALLY = "Run it locally: npx firediff base.rules head.rules";
+var LOCALLY = "Run it locally: npx @amsozzer/firediff base.rules head.rules";
 var runDiff = async (emulator, base, head, config2, signal) => {
   const result = await runPair({ label: "base.rules", source: base }, { label: "head.rules", source: head }, emulator, config2, signal);
   const report = buildReport(result);

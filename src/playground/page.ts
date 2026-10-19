@@ -35,7 +35,7 @@ const json = (v: unknown) => JSON.stringify(v).replace(/</g, '\\u003c');
 function about(hosted?: HostedLimits): string {
   if (!hosted) return 'Runs on a local emulator.';
   return `Runs in a Firestore emulator on this server; nothing is stored. Up to ${hosted.rulesBytes / 1024} KB per file and ${hosted.maxRequests} requests.
-    For bigger files, run <code>npx firediff</code> (<a href="https://github.com/Amsozzer1/firediff">GitHub</a>).`;
+    For bigger files, run <code>npx @amsozzer/firediff</code> (<a href="https://github.com/Amsozzer1/firediff">GitHub</a>).`;
 }
 
 /** The playground page: two editors, a Compare button, and the rendered report. No external resources. */

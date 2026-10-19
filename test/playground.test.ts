@@ -98,7 +98,7 @@ describe('playground --hosted', () => {
     const big = rules('true') + '\n//' + 'x'.repeat(64 * 1024);
     const r1 = await s.post({ base: big, head: small.head });
     expect(r1.status).toBe(413);
-    expect((await r1.json()).error).toMatch(/base\.rules is 65 KB.*up to 64 KB.*npx firediff/);
+    expect((await r1.json()).error).toMatch(/base\.rules is 65 KB.*up to 64 KB.*npx @amsozzer\/firediff/);
     const r2 = await s.post({ ...small, config: '#' + 'x'.repeat(8 * 1024) });
     expect(r2.status).toBe(413);
     expect((await r2.json()).error).toMatch(/firediff\.yml.*up to 8 KB/);
@@ -111,7 +111,7 @@ describe('playground --hosted', () => {
     const s = await start(async (...a) => (ran++, ok(...a)), { limits: { maxRequests: 3 } });
     const r = await s.post(small);
     expect(r.status).toBe(413);
-    expect((await r.json()).error).toMatch(/need \d+ requests; the hosted playground runs up to 3\. Run it locally: npx firediff/);
+    expect((await r.json()).error).toMatch(/need \d+ requests; the hosted playground runs up to 3\. Run it locally: npx @amsozzer\/firediff/);
     expect(ran).toBe(0);
   });
 
@@ -164,7 +164,7 @@ describe('playground --hosted', () => {
     const s = await start(async () => Promise.reject(new DiffTimeoutError(5_000)), {});
     const r = await s.post(small);
     expect(r.status).toBe(504);
-    expect((await r.json()).error).toMatch(/longer than 5 s.*npx firediff/);
+    expect((await r.json()).error).toMatch(/longer than 5 s.*npx @amsozzer\/firediff/);
   });
 
   it('serves /healthz from the health check, 503 when it fails', async () => {

@@ -29,19 +29,20 @@ Set `FIREDIFF_EMULATOR_JAR` to use a jar you already have.
 
 ```sh
 # Compare two files
-npx firediff base.rules head.rules
+npx @amsozzer/firediff base.rules head.rules
 
 # Compare a branch or commit with your working tree (reads the rules path from firebase.json)
-npx firediff --since main
+npx @amsozzer/firediff --since main
 
 # Paste two rules files into a local web page
-npx firediff playground          # http://127.0.0.1:8787/
+npx @amsozzer/firediff playground   # http://127.0.0.1:8787/
 
 # See the generated requests without running them
-npx firediff plan base.rules head.rules
+npx @amsozzer/firediff plan base.rules head.rules
 ```
 
-The npm package is one bundled file with no dependencies. If `FIRESTORE_EMULATOR_HOST` is set,
+The npm package is `@amsozzer/firediff`; installed with `npm i -g @amsozzer/firediff`, the command is
+`firediff`. It's one bundled file with no dependencies. If `FIRESTORE_EMULATOR_HOST` is set,
 firediff uses that emulator; otherwise it starts its own on free ports and stops it afterwards.
 
 | Option | |

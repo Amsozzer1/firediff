@@ -62,7 +62,7 @@ export class RateLimiter {
       return {
         ok: false,
         retryAfterSec: Math.ceil((e.dayStart + DAY - t) / 1000),
-        message: `The hosted playground allows ${this.perDay} comparisons a day per address. Run it locally: npx firediff playground`,
+        message: `The hosted playground allows ${this.perDay} comparisons a day per address. Run it locally: npx @amsozzer/firediff playground`,
       };
     }
     if (e.recent.length >= this.perMinute) {

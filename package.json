@@ -1,5 +1,5 @@
 {
-  "name": "firediff",
+  "name": "@amsozzer/firediff",
   "version": "0.1.0",
   "description": "Show who a Firestore security rules change just let in.",
   "keywords": [
@@ -18,7 +18,7 @@
   "author": "AMSOZZER",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Amsozzer1/firediff.git"
+    "url": "git+https://github.com/Amsozzer1/firediff.git"
   },
   "type": "module",
   "bin": {
@@ -30,6 +30,9 @@
     "LICENSE",
     "NOTICE"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=22"
   },

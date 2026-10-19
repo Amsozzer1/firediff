@@ -34,7 +34,7 @@ export interface PlaygroundOptions {
 }
 
 const MAX_BODY = 512 * 1024;
-const LOCALLY = 'Run it locally: npx firediff base.rules head.rules';
+const LOCALLY = 'Run it locally: npx @amsozzer/firediff base.rules head.rules';
 
 /** One comparison on the given emulator (the real RunDiff). */
 export const runDiff: RunDiff = async (emulator, base, head, config, signal) => {
