@@ -1,5 +1,5 @@
 name: firediff
-description: Show who a Firestore security rules change just let in, as a sticky PR comment.
+description: See who your Firestore rules PR just let in, as a sticky PR comment.
 author: AMSOZZER
 branding:
   icon: shield
