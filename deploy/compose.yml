@@ -11,7 +11,9 @@ services:
     image: firediff-playground
     # cf-connecting-ip: the visitor's address, set by Cloudflare. Safe to trust because the only way
     # in is the tunnel (expose, not ports).
-    command: ["playground", "--hosted", "--ip-header", "cf-connecting-ip", "--host", "0.0.0.0", "--port", "8787"]
+    # --max-requests 150: measured on the OptiPlex (i5-7600, 1.5 CPUs), about 1 s plus 15-30 ms per
+    # request, so 150 finishes inside the 5 s limit with room to spare. See README.md, Calibrating.
+    command: ["playground", "--hosted", "--ip-header", "cf-connecting-ip", "--max-requests", "150", "--host", "0.0.0.0", "--port", "8787"]
     expose: ["8787"]
     restart: unless-stopped
     init: true

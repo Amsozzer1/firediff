@@ -14,7 +14,7 @@ What `--hosted` adds to the local playground:
 | Limit | Value | Flag to change it |
 |---|---|---|
 | Rules file size | 64 KB each (firediff.yml: 8 KB), else 413 | |
-| Requests per comparison | 600, checked before running, else 413 | `--max-requests` |
+| Requests per comparison | 150 here (default 600), checked before running, else 413 | `--max-requests` |
 | Time per comparison | 5 s, then 504 and a background emulator restart | `--timeout` (seconds) |
 | Rate limit | 10 a minute and 100 a day per visitor (IPv6: per /64), else 429 | |
 | Queue | one comparison at a time, 5 waiting, else 429 | |
@@ -117,18 +117,29 @@ To roll back, `git checkout <previous commit>`, then run `docker compose up -d -
 
 ## Calibrating the request cap
 
-The 600-request cap has to finish within the 5 s limit on this machine with 1.5 CPUs. To check,
-time [calibrate.json](calibrate.json), which is 576 requests. Each run counts against the rate
-limit.
+The request cap has to finish within the 5 s limit. On the OptiPlex (i5-7600, 1.5 CPUs) a
+comparison takes about 1 s plus 15–30 ms per request, depending on the rules:
+
+| Requests | Time |
+|---|---|
+| 32 (the built-in example) | 1.5 s |
+| 84 | 2.1–2.9 s |
+| 144 | 3.6–4.5 s |
+| 192 | 4.2–4.7 s |
+| 288 | 6.4 s |
+| 576 | 11.7 s |
+
+More CPUs barely help, because requests go out one after another: with all 4 cores, 576 requests
+still take 11.3 s. So compose.yml sets `--max-requests 150`, and the timeout only catches outliers.
+
+To re-check after a hardware or firediff change, time [calibrate.json](calibrate.json) (576
+requests; it should get a 413 with the cap at 150). Then time a file just under the cap. Each run
+counts against the rate limit.
 
 ```sh
-for i in 1 2 3; do
-  curl -s -o /dev/null -w '%{http_code} %{time_total}s\n' \
-    -H 'content-type: application/json' --data-binary @calibrate.json https://firediff.amsozzer.com/api/diff
-done
+curl -s -o /dev/null -w '%{http_code} %{time_total}s\n' \
+  -H 'content-type: application/json' --data-binary @calibrate.json https://firediff.amsozzer.com/api/diff
 ```
 
-If it returns 504, or comes close to 5 s, choose one of these, then run `docker compose up -d`:
-- Lower the cap: add `"--max-requests", "<n>"` to `command:` in compose.yml. Time grows about
-  linearly with requests.
-- Raise the limit with `"--timeout", "<seconds>"`.
+To allow bigger files, raise both limits together, e.g. `"--max-requests", "400"` with
+`"--timeout", "12"`. Then run `docker compose up -d`.
