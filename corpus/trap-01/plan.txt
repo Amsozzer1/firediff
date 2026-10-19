@@ -1,0 +1,23 @@
+firediff plan
+  base: corpus/trap-01/base.rules (rules_version 2)
+  head: corpus/trap-01/head.rules (rules_version 2)
+
+principals (4)
+  signed out  -             anyone, without signing in
+  stranger    u_stranger    any signed-in user
+  owner       u_owner       the user who owns the doc
+  other user  u_other       another signed-in user who owns docs of their own
+
+seed docs (2), identical in base and head
+  users/u_other  {"role":"member"}
+  users/u_owner  {"role":"member"}
+
+requests (8) x principals = 32 cases
+  get     users/u_owner                                   all principals  read the doc
+  get     users/u_stranger                                all principals  read a doc that doesn't exist
+  list    users                                           all principals  list the whole collection
+  create  users/u_owner     {"role":"admin"}              all principals  create with role = 'admin', outside the allowed values
+  create  users/u_owner     {"role":"member"}             all principals  create with a payload the rules allow
+  update  users/u_owner     {"firediff_probe":"changed"}  all principals  change only a probe field; every field the rules read keeps its seed value
+  update  users/u_owner     {"role":"admin"}              all principals  change only role (to 'admin')
+  delete  users/u_owner                                   all principals  delete the doc

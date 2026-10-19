@@ -1,0 +1,11 @@
+[
+  { "who": "stranger", "op": "create", "path": "config/k1", "base": "deny", "head": "allow" },
+  { "who": "stranger", "op": "update", "fields": ["firediff_probe"], "path": "config/k1", "base": "deny", "head": "allow" },
+  { "who": "stranger", "op": "delete", "path": "config/k1", "base": "deny", "head": "allow" },
+  { "who": "owner", "op": "create", "path": "config/k1", "base": "deny", "head": "allow" },
+  { "who": "owner", "op": "update", "fields": ["firediff_probe"], "path": "config/k1", "base": "deny", "head": "allow" },
+  { "who": "owner", "op": "delete", "path": "config/k1", "base": "deny", "head": "allow" },
+  { "who": "other user", "op": "create", "path": "config/k1", "base": "deny", "head": "allow" },
+  { "who": "other user", "op": "update", "fields": ["firediff_probe"], "path": "config/k1", "base": "deny", "head": "allow" },
+  { "who": "other user", "op": "delete", "path": "config/k1", "base": "deny", "head": "allow" }
+]

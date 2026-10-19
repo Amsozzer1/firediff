@@ -1,0 +1,16 @@
+firediff
+Copyright (c) 2026 AMSOZZER
+Licensed under the MIT License (see LICENSE).
+
+This product includes software developed by Google LLC:
+
+  src/grammar/FirebaseRulesLexer.ts
+  src/grammar/FirebaseRulesParser.ts
+  src/grammar/FirebaseRulesParserListener.ts
+
+These are from @firebase/eslint-plugin-security-rules 0.0.2, Copyright 2026 Google LLC, licensed
+under the Apache License, Version 2.0 (see src/grammar/LICENSE). Changes are listed in
+src/grammar/NOTICE.
+
+The bundles in dist/ contain third-party npm packages under their own licenses; see
+dist/cli/licenses.txt and dist/action/licenses.txt.

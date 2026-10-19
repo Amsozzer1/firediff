@@ -1,0 +1,87 @@
+name: firediff
+description: Show who a Firestore security rules change just let in, as a sticky PR comment.
+author: AMSOZZER
+branding:
+  icon: shield
+  color: orange
+
+inputs:
+  base:
+    description: Git ref or sha to compare against. Defaults to the pull request's base commit (or the previous commit on push).
+    required: false
+    default: ''
+  rules:
+    description: Path to the Firestore rules file. Defaults to the one named in firebase.json.
+    required: false
+    default: ''
+  working-directory:
+    description: Directory that holds firebase.json (and firediff.yml, if any).
+    required: false
+    default: '.'
+  config:
+    description: Path to a firediff.yml with extra docs, claims, principals or payloads.
+    required: false
+    default: ''
+  fail-on:
+    description: 'Fail the check when access was "gained" (default), on "any" change, or "never".'
+    required: false
+    default: gained
+  strict:
+    description: Also fail (exit 2) when firediff could test fewer than half of the rules.
+    required: false
+    default: 'false'
+  comment:
+    description: Post (or update) a sticky comment on the pull request.
+    required: false
+    default: 'true'
+  github-token:
+    description: 'Token used to post the comment. Needs `pull-requests: write`.'
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  gained:
+    description: Number of gained-access rows in the report.
+    value: ${{ steps.run.outputs.gained }}
+  lost:
+    description: Number of lost-access rows in the report.
+    value: ${{ steps.run.outputs.lost }}
+  requests:
+    description: Number of requests firediff sent.
+    value: ${{ steps.run.outputs.requests }}
+  report:
+    description: Path to the markdown report.
+    value: ${{ steps.run.outputs.report }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: '21'
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+
+    - name: Cache the Firestore emulator
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/firebase/emulators
+        key: firediff-emulator-${{ runner.os }}-1.22.0
+
+    # dist/ is committed: no install or build step.
+    - name: Run firediff
+      id: run
+      shell: bash
+      env:
+        FIREDIFF_INPUT_BASE: ${{ inputs.base }}
+        FIREDIFF_INPUT_RULES: ${{ inputs.rules }}
+        FIREDIFF_INPUT_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        FIREDIFF_INPUT_CONFIG: ${{ inputs.config }}
+        FIREDIFF_INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        FIREDIFF_INPUT_STRICT: ${{ inputs.strict }}
+        FIREDIFF_INPUT_COMMENT: ${{ inputs.comment }}
+        FIREDIFF_INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: node "${{ github.action_path }}/dist/action/index.js"

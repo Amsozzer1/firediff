@@ -1,0 +1,34 @@
+firediff plan
+  base: corpus/trap-03/base.rules (rules_version 2)
+  head: corpus/trap-03/head.rules (rules_version 2)
+
+principals (7)
+  signed out           -                        anyone, without signing in
+  stranger             u_stranger               any signed-in user
+  owner                u_owner                  the user who owns the doc
+  other user           u_other                  another signed-in user who owns docs of their own
+  members doc          u_members_doc            a user who has a doc at teams/{teamId}/members/{uid}
+  members.role=admin   u_members_role_admin     a user whose doc at teams/{teamId}/members/{uid} has role == 'admin'
+  members.role=member  u_members_role_member    a user whose doc at teams/{teamId}/members/{uid} has role == 'member'
+
+seed docs (6), identical in base and head
+  teams/t1                                {}
+  teams/t1/members/u_members_doc          {}
+  teams/t1/members/u_members_role_admin   {"role":"admin"}
+  teams/t1/members/u_members_role_member  {"role":"member"}
+  teams/t1/members/u_other                {}
+  teams/t1/members/u_owner                {}
+
+requests (12) x principals = 84 cases
+  get     teams/missing-doc                                          all principals  read a doc that doesn't exist
+  get     teams/t1                                                   all principals  read the doc
+  list    teams                                                      all principals  list the whole collection
+  create  teams/t1                     {}                            all principals  create with a payload the rules allow
+  update  teams/t1                     {"firediff_probe":"changed"}  all principals  the rules read no fields here; change a probe field
+  delete  teams/t1                                                   all principals  delete the doc
+  get     teams/t1/members/u_owner                                   all principals  read the doc
+  get     teams/t1/members/u_stranger                                all principals  read a doc that doesn't exist
+  list    teams/t1/members                                           all principals  list the whole collection
+  create  teams/t1/members/u_owner     {}                            all principals  create with a payload the rules allow
+  update  teams/t1/members/u_owner     {"firediff_probe":"changed"}  all principals  the rules read no fields here; change a probe field
+  delete  teams/t1/members/u_owner                                   all principals  delete the doc

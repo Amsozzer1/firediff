@@ -1,0 +1,44 @@
+rules_version = '2';
+
+// Role checks through get()/exists() lookups on other documents.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function userDoc() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    function role() {
+      return get(userDoc()).data.role;
+    }
+
+    function isAdmin() {
+      return request.auth != null && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    function memberRole(teamId) {
+      let membership = get(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
+      return membership.data.role;
+    }
+
+    match /users/{uid} {
+      allow read: if request.auth != null && (request.auth.uid == uid || isAdmin());
+      allow write: if request.auth.uid == uid && !('role' in request.resource.data);
+    }
+
+    match /teams/{teamId} {
+      allow read: if memberRole(teamId) in ['viewer', 'editor', 'owner'];
+      allow update: if memberRole(teamId) == 'owner' || role() == 'staff';
+
+      match /members/{memberId} {
+        allow read: if exists(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
+        allow write: if memberRole(teamId) == 'owner' || isAdmin();
+      }
+    }
+
+    match /reports/{reportId} {
+      allow read: if role() in ['staff', 'auditor'];
+      allow create: if role() == 'staff'
+        && getAfter(/databases/$(database)/documents/reports/$(reportId)).data.author == request.auth.uid;
+    }
+  }
+}

@@ -1,0 +1,34 @@
+firediff plan
+  base: corpus/trap-04/base.rules (rules_version 2)
+  head: corpus/trap-04/head.rules (rules_version 2)
+
+principals (6)
+  signed out        -                     anyone, without signing in
+  stranger          u_stranger            any signed-in user
+  owner             u_owner               the user who owns the doc
+  other user        u_other               another signed-in user who owns docs of their own
+  users doc         u_users_doc           a user who has a doc at users/{uid}
+  users.role=admin  u_users_role_admin    a user whose doc at users/{uid} has role == 'admin'
+
+seed docs (5), identical in base and head
+  reports/r1                {}
+  users/u_other             {"role":"member"}
+  users/u_owner             {"role":"member"}
+  users/u_users_doc         {}
+  users/u_users_role_admin  {"role":"admin"}
+
+requests (14) x principals = 84 cases
+  get     reports/missing-doc                                all principals  read a doc that doesn't exist
+  get     reports/r1                                         all principals  read the doc
+  list    reports                                            all principals  list the whole collection
+  create  reports/r1           {}                            all principals  create with a payload the rules allow
+  update  reports/r1           {"firediff_probe":"changed"}  all principals  the rules read no fields here; change a probe field
+  delete  reports/r1                                         all principals  delete the doc
+  get     users/u_owner                                      all principals  read the doc
+  get     users/u_stranger                                   all principals  read a doc that doesn't exist
+  list    users                                              all principals  list the whole collection
+  create  users/u_owner        {"role":"admin"}              all principals  create with role = 'admin', outside the allowed values
+  create  users/u_owner        {"role":"member"}             all principals  create with a payload the rules allow
+  update  users/u_owner        {"firediff_probe":"changed"}  all principals  change only a probe field; every field the rules read keeps its seed value
+  update  users/u_owner        {"role":"admin"}              all principals  change only role (to 'admin')
+  delete  users/u_owner                                      all principals  delete the doc

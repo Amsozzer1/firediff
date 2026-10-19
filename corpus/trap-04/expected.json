@@ -1,0 +1,3 @@
+[
+  { "who": "owner", "op": "create", "fields": ["role"], "path": "users/u_owner", "base": "deny", "head": "allow" }
+]

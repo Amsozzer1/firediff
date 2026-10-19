@@ -1,0 +1,31 @@
+rules_version = '2';
+
+// Custom claims on request.auth.token.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAdmin() {
+      return request.auth.token.admin == true;
+    }
+
+    function hasRole(r) {
+      return request.auth.token.role == r;
+    }
+
+    function verified() {
+      return request.auth.token.email_verified == true
+        && request.auth.token.firebase.sign_in_provider != 'anonymous';
+    }
+
+    match /articles/{articleId} {
+      allow read: if resource.data.published == true || hasRole('editor') || isAdmin();
+      allow create: if verified() && (hasRole('editor') || hasRole('writer'));
+      allow update: if hasRole('editor') || (hasRole('writer') && resource.data.author == request.auth.uid);
+      allow delete: if isAdmin();
+    }
+
+    match /billing/{tenantId} {
+      allow read: if request.auth.token.tenant == tenantId && request.auth.token.plan in ['pro', 'enterprise'];
+      allow write: if isAdmin() && request.auth.token.email.matches('.*@example[.]com$');
+    }
+  }
+}

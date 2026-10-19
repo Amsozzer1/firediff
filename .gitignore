@@ -1,0 +1,7 @@
+node_modules
+*.log
+firebase-debug.log
+.firebase/
+.cache/
+firebase.alt*.json
+.build/

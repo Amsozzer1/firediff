@@ -1,0 +1,45 @@
+{
+  "name": "firediff",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Show who a Firestore security rules change just let in.",
+  "bin": {
+    "firediff": "dist/cli/index.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsup && ncc build .build/bin.js -o dist/cli -q --license licenses.txt && ncc build .build/action.js -o dist/action -q --license licenses.txt",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "emulator": "scripts/java21.sh firebase emulators:start --only firestore --project demo-firediff",
+    "test:emulator": "scripts/java21.sh firebase emulators:exec --only firestore --project demo-firediff \"vitest run\"",
+    "firediff": "tsx src/bin.ts",
+    "traps": "scripts/java21.sh firebase emulators:exec --only firestore --project demo-firediff \"tsx scripts/traps.ts\""
+  },
+  "dependencies": {
+    "@firebase/rules-unit-testing": "6.0.0",
+    "ajv": "^8.20.0",
+    "antlr4": "4.13.2",
+    "firebase": "13.0.0",
+    "marked": "15.0.12",
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@vercel/ncc": "0.38.3",
+    "firebase-tools": "15.34.0",
+    "tsup": "^9.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  },
+  "packageManager": "pnpm@12.6.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Amsozzer1/firediff.git"
+  }
+}

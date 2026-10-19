@@ -1,0 +1,33 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/firebase/emulators
+          key: firediff-emulator-${{ runner.os }}-1.22.0
+      - run: corepack enable && pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm build
+      - name: dist/ is up to date with src/
+        run: |
+          if ! git diff --quiet -- dist/ || [ -n "$(git ls-files --others --exclude-standard -- dist/)" ]; then
+            echo "::error::dist/ is stale. Run 'pnpm build' and commit dist/."
+            git status --short -- dist/
+            exit 1
+          fi
+      - run: pnpm test:emulator

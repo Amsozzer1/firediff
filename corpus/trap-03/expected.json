@@ -1,0 +1,3 @@
+[
+  { "who": "members.role=member", "op": "get", "path": "teams/t1", "base": "deny", "head": "allow" }
+]

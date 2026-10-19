@@ -1,0 +1,21 @@
+firediff plan
+  base: corpus/trap-02/base.rules (rules_version 2)
+  head: corpus/trap-02/head.rules (rules_version 2)
+
+principals (5)
+  signed out        -                                 anyone, without signing in
+  stranger          u_stranger                        any signed-in user
+  owner             u_owner                           the user who owns the doc
+  other user        u_other                           another signed-in user who owns docs of their own
+  token.admin=true  u_tok_admin_true  {"admin":true}  a user whose token has admin == true
+
+seed docs (1), identical in base and head
+  config/k1  {}
+
+requests (6) x principals = 30 cases
+  get     config/k1                                         all principals  read the doc
+  get     config/missing-doc                                all principals  read a doc that doesn't exist
+  list    config                                            all principals  list the whole collection
+  create  config/k1           {}                            all principals  create with a payload the rules allow
+  update  config/k1           {"firediff_probe":"changed"}  all principals  the rules read no fields here; change a probe field
+  delete  config/k1                                         all principals  delete the doc

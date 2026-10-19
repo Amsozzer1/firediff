@@ -1,0 +1,10 @@
+[
+  { "who": "stranger", "op": "get", "path": "users/u_owner", "base": "deny", "head": "allow" },
+  { "who": "stranger", "op": "list", "path": "users", "base": "deny", "head": "allow" },
+  { "who": "owner", "op": "list", "path": "users", "base": "deny", "head": "allow" },
+  { "who": "owner", "op": "update", "fields": ["role"], "path": "users/u_owner", "base": "deny", "head": "allow" },
+  { "who": "other user", "op": "get", "path": "users/u_owner", "base": "deny", "head": "allow" },
+  { "who": "other user", "op": "list", "path": "users", "base": "deny", "head": "allow" },
+  { "who": "owner", "op": "get", "path": "users/u_stranger", "base": "deny", "head": "allow" },
+  { "who": "other user", "op": "get", "path": "users/u_stranger", "base": "deny", "head": "allow" }
+]

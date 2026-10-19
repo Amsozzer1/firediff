@@ -1,0 +1,18 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /teams/{teamId} {
+      function role() {
+        return get(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid)).data.role;
+      }
+
+      allow read: if request.auth != null && role() in ['admin', 'member'];
+      allow write: if false;
+
+      match /members/{memberId} {
+        allow read: if request.auth != null && request.auth.uid == memberId;
+        allow write: if false;
+      }
+    }
+  }
+}
