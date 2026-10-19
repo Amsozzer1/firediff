@@ -31,8 +31,9 @@ try {
   if (state.answered) state.misses++;
   save();
   if (state.answered && state.misses >= MISSES) {
-    // PID 1 is docker-init, which ignores signals sent from inside the container; kill the server it runs.
-    for (const pid of readdirSync('/proc').filter((p) => /^\d+$/.test(p))) {
+    // PID 1 is docker-init (its command line names the server too), and it ignores signals sent from
+    // inside the container; kill the server it runs.
+    for (const pid of readdirSync('/proc').filter((p) => /^\d+$/.test(p) && p !== '1')) {
       try {
         const cmd = readFileSync(`/proc/${pid}/cmdline`, 'utf8');
         if (cmd.includes('/opt/firediff/cli/index.js') && cmd.includes('playground')) process.kill(Number(pid), 'SIGKILL');
