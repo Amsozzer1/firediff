@@ -13,11 +13,14 @@ ADD --checksum=sha256:9b6498b7f62714d67f48f59b3818883cd682dbcd46b9f59511de81c97b
     /opt/firediff/cloud-firestore-emulator-v1.22.0.jar
 RUN chmod 644 /opt/firediff/cloud-firestore-emulator-v1.22.0.jar
 COPY dist/cli /opt/firediff/cli
+COPY deploy/healthcheck.mjs /opt/firediff/healthcheck.mjs
 
 USER node
 WORKDIR /home/node
 EXPOSE 8787
-HEALTHCHECK --interval=30s --timeout=5s --start-period=60s \
-  CMD ["node", "-e", "fetch('http://127.0.0.1:8787/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+# Every 10 s. Three missed answers in a row kill the server so the restart policy replaces it
+# (deploy/healthcheck.mjs), so a hung server is back within about a minute.
+HEALTHCHECK --interval=10s --timeout=8s --start-period=120s --retries=3 \
+  CMD ["node", "/opt/firediff/healthcheck.mjs"]
 ENTRYPOINT ["node", "/opt/firediff/cli/index.js"]
 CMD ["playground", "--hosted", "--host", "0.0.0.0", "--port", "8787"]

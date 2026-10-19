@@ -1,3 +1,4 @@
 # The image only needs the bundled CLI.
 *
 !dist/cli
+!deploy/healthcheck.mjs
