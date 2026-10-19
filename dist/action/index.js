@@ -148661,71 +148661,84 @@ async function serve(job, post) {
   }
 }
 if (!external_worker_threads_namespaceObject.isMainThread && external_worker_threads_namespaceObject.workerData?.[MARK]) {
-  external_worker_threads_namespaceObject.parentPort.once("message", (job) => void serve(job, (m) => external_worker_threads_namespaceObject.parentPort.postMessage(m)));
-  external_worker_threads_namespaceObject.parentPort.postMessage({ kind: "ready" });
+  external_worker_threads_namespaceObject.parentPort.on("message", ({ id, job }) => void serve(job, (m) => external_worker_threads_namespaceObject.parentPort.postMessage({ id, ...m })));
+  external_worker_threads_namespaceObject.parentPort.postMessage({ id: 0, kind: "ready" });
 }
-function workerRunDiff(entry, maxRequests, maxHeapMb = 384) {
+function workerRunDiff(entry, maxRequests, opts = {}) {
+  const { maxHeapMb = 384, recycleEvery = 100 } = opts;
   const spawn2 = () => {
     const worker = new external_worker_threads_namespaceObject.Worker(entry, { workerData: { [MARK]: true }, resourceLimits: { maxOldGenerationSizeMb: maxHeapMb } });
     worker.unref();
-    const ready = new Promise((resolve) => {
+    const slot2 = { worker, ready: Promise.resolve(), dead: false, jobs: 0 };
+    slot2.ready = new Promise((resolve) => {
       worker.once("message", () => resolve());
-      worker.once("error", () => resolve());
       worker.once("exit", () => resolve());
     });
-    const w = { worker, ready, dead: false };
-    worker.once("exit", () => w.dead = true);
-    return w;
+    worker.once("exit", () => slot2.dead = true);
+    worker.on("error", () => void 0);
+    return slot2;
   };
-  let spare = null;
+  let slot = null;
   let closed = false;
-  const take = () => {
-    const w = spare && !spare.dead ? spare : spawn2();
-    spare = null;
-    return w;
+  let nextId = 1;
+  const retire = (s) => {
+    s.dead = true;
+    if (slot === s) slot = null;
+    void s.worker.terminate();
   };
-  const restock = () => {
-    if (!closed && (!spare || spare.dead)) spare = spawn2();
+  const current = () => {
+    if (!slot || slot.dead) slot = spawn2();
+    return slot;
   };
   const run2 = ((emulator, base, head, config2, signal, onEmulator) => new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(signal.reason);
-    const { worker, ready } = take();
-    worker.ref();
+    const s = current();
+    const id = nextId++;
+    s.jobs++;
+    s.worker.ref();
     let settled = false;
-    const finish = (settle) => {
+    const finish = (settle, keepWorker) => {
       if (settled) return;
       settled = true;
       signal?.removeEventListener("abort", onAbort);
-      void worker.terminate();
-      restock();
+      s.worker.off("message", onMessage);
+      s.worker.off("exit", onExit);
+      s.worker.off("error", onError);
+      if (!keepWorker || s.jobs >= recycleEvery) retire(s);
+      else s.worker.unref();
+      if (!closed) current();
       settle();
     };
-    const onAbort = () => finish(() => reject(signal.reason));
-    signal?.addEventListener("abort", onAbort, { once: true });
-    worker.on("message", (m) => {
-      if (m.kind === "ready") return;
+    const onAbort = () => finish(() => reject(signal.reason), false);
+    const onMessage = (m) => {
+      if (m.id !== id) return;
       if (m.kind === "emulator") onEmulator?.();
-      else if (m.kind === "done") finish(() => resolve(m.result));
-      else if (m.kind === "too-many") finish(() => reject(new TooManyRequestsError(m.requests, maxRequests)));
-      else if (m.kind === "parse-error") finish(() => reject(new RulesParseError(m.file, m.line, m.column, m.reason)));
-      else finish(() => reject(new Error(m.message)));
-    });
-    worker.on(
-      "error",
-      (e) => finish(() => reject(e.code === "ERR_WORKER_OUT_OF_MEMORY" ? new Error("these rules need more memory than the hosted playground allows") : e))
-    );
-    worker.on("exit", (code2) => finish(() => reject(new Error(`comparison worker exited (${code2})`))));
+      else if (m.kind === "done") finish(() => resolve(m.result), true);
+      else if (m.kind === "too-many") finish(() => reject(new TooManyRequestsError(m.requests, maxRequests)), true);
+      else if (m.kind === "parse-error") finish(() => reject(new RulesParseError(m.file, m.line, m.column, m.reason)), true);
+      else finish(() => reject(new Error(m.message)), false);
+    };
+    let failure = null;
+    const onError = (e) => {
+      failure = e.code === "ERR_WORKER_OUT_OF_MEMORY" ? new Error("these rules need more memory than the hosted playground allows") : e;
+    };
+    const onExit = (code2) => finish(() => reject(failure ?? new Error(`comparison worker exited (${code2})`)), false);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    s.worker.on("message", onMessage);
+    s.worker.on("error", onError);
+    s.worker.once("exit", onExit);
     const job = { emulator, base, head, config: config2, maxRequests };
-    void ready.then(() => worker.postMessage(job));
+    void s.ready.then(() => {
+      if (!settled) s.worker.postMessage({ id, job });
+    });
   }));
   run2.ready = async () => {
-    restock();
-    await spare?.ready;
+    if (!closed) await current().ready;
   };
   run2.close = async () => {
     closed = true;
-    const s = spare;
-    spare = null;
+    const s = slot;
+    slot = null;
     if (s) await s.worker.terminate();
   };
   return run2;

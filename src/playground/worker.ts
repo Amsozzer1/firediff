@@ -42,91 +42,106 @@ async function serve(job: Job, post: (m: Message) => void): Promise<void> {
   }
 }
 
-// A worker loads the module, says it's ready, then runs the one job it's sent.
+// A worker loads the module, says it's ready, then runs the jobs it's sent, one at a time.
 if (!isMainThread && workerData?.[MARK]) {
-  parentPort!.once('message', (job: Job) => void serve(job, (m) => parentPort!.postMessage(m)));
-  parentPort!.postMessage({ kind: 'ready' });
+  parentPort!.on('message', ({ id, job }: { id: number; job: Job }) => void serve(job, (m) => parentPort!.postMessage({ id, ...m })));
+  parentPort!.postMessage({ id: 0, kind: 'ready' });
 }
 
 export type WorkerRunDiff = RunDiff & {
   /** Resolves once a loaded worker is waiting for the next comparison. */
   ready(): Promise<void>;
-  /** Terminate the waiting worker. */
+  /** Terminate the worker. */
   close(): Promise<void>;
 };
 
 /**
- * A RunDiff that runs each comparison in a fresh worker thread, loaded from `entry`: the firediff
- * bundle, or src/cli.ts under tsx. Loading takes most of a second on a slow machine, so after each
- * comparison the next worker is started and left waiting. Aborting terminates the worker wherever it
- * is. Rules over `maxRequests` are turned away (TooManyRequestsError) before the emulator is touched.
+ * A RunDiff that runs comparisons in a worker thread loaded from `entry`: the firediff bundle, or
+ * src/cli.ts under tsx. The worker stays loaded between comparisons (a fresh one costs about a
+ * second of start-up and cold code on a slow machine). It's replaced when a comparison is aborted
+ * (the worker is terminated wherever it is), when it fails, and every `recycleEvery` comparisons.
+ * Rules over `maxRequests` are turned away (TooManyRequestsError) before the emulator is touched.
+ * Callers run one comparison at a time.
  */
-export function workerRunDiff(entry: string, maxRequests: number, maxHeapMb = 384): WorkerRunDiff {
-  const spawn = () => {
+export function workerRunDiff(entry: string, maxRequests: number, opts: { maxHeapMb?: number; recycleEvery?: number } = {}): WorkerRunDiff {
+  const { maxHeapMb = 384, recycleEvery = 100 } = opts;
+  type Slot = { worker: Worker; ready: Promise<void>; dead: boolean; jobs: number };
+  const spawn = (): Slot => {
     const worker = new Worker(entry, { workerData: { [MARK]: true }, resourceLimits: { maxOldGenerationSizeMb: maxHeapMb } });
-    // A waiting worker shouldn't keep the process alive.
-    worker.unref();
-    const ready = new Promise<void>((resolve) => {
+    worker.unref(); // an idle worker shouldn't keep the process alive
+    const slot: Slot = { worker, ready: Promise.resolve(), dead: false, jobs: 0 };
+    slot.ready = new Promise<void>((resolve) => {
       worker.once('message', () => resolve());
-      worker.once('error', () => resolve());
       worker.once('exit', () => resolve());
     });
-    const w = { worker, ready, dead: false };
-    worker.once('exit', () => (w.dead = true));
-    return w;
+    worker.once('exit', () => (slot.dead = true));
+    worker.on('error', () => undefined); // reported to the comparison through 'exit'
+    return slot;
   };
-  let spare: ReturnType<typeof spawn> | null = null;
+  let slot: Slot | null = null;
   let closed = false;
-  const take = () => {
-    const w = spare && !spare.dead ? spare : spawn();
-    spare = null;
-    return w;
+  let nextId = 1;
+  const retire = (s: Slot) => {
+    s.dead = true;
+    if (slot === s) slot = null;
+    void s.worker.terminate();
   };
-  // After a comparison, not during one: loading competes with the run for CPU.
-  const restock = () => {
-    if (!closed && (!spare || spare.dead)) spare = spawn();
+  const current = () => {
+    if (!slot || slot.dead) slot = spawn();
+    return slot;
   };
 
   const run = ((emulator, base, head, config, signal, onEmulator) =>
     new Promise<DiffResult>((resolve, reject) => {
       if (signal?.aborted) return reject(signal.reason);
-      const { worker, ready } = take();
-      worker.ref();
+      const s = current();
+      const id = nextId++;
+      s.jobs++;
+      s.worker.ref();
       let settled = false;
-      const finish = (settle: () => void) => {
+      const finish = (settle: () => void, keepWorker: boolean) => {
         if (settled) return;
         settled = true;
         signal?.removeEventListener('abort', onAbort);
-        void worker.terminate();
-        restock();
+        s.worker.off('message', onMessage);
+        s.worker.off('exit', onExit);
+        s.worker.off('error', onError);
+        if (!keepWorker || s.jobs >= recycleEvery) retire(s);
+        else s.worker.unref();
+        if (!closed) current(); // have the next one loading while idle
         settle();
       };
-      const onAbort = () => finish(() => reject(signal!.reason));
-      signal?.addEventListener('abort', onAbort, { once: true });
-      worker.on('message', (m: Message | { kind: 'ready' }) => {
-        if (m.kind === 'ready') return;
+      const onAbort = () => finish(() => reject(signal!.reason), false);
+      const onMessage = (m: Message & { id: number }) => {
+        if (m.id !== id) return;
         if (m.kind === 'emulator') onEmulator?.();
-        else if (m.kind === 'done') finish(() => resolve(m.result));
-        else if (m.kind === 'too-many') finish(() => reject(new TooManyRequestsError(m.requests, maxRequests)));
-        else if (m.kind === 'parse-error') finish(() => reject(new RulesParseError(m.file, m.line, m.column, m.reason)));
-        else finish(() => reject(new Error(m.message)));
-      });
-      worker.on('error', (e: NodeJS.ErrnoException) =>
-        finish(() => reject(e.code === 'ERR_WORKER_OUT_OF_MEMORY' ? new Error('these rules need more memory than the hosted playground allows') : e)),
-      );
-      worker.on('exit', (code) => finish(() => reject(new Error(`comparison worker exited (${code})`))));
+        else if (m.kind === 'done') finish(() => resolve(m.result), true);
+        else if (m.kind === 'too-many') finish(() => reject(new TooManyRequestsError(m.requests, maxRequests)), true);
+        else if (m.kind === 'parse-error') finish(() => reject(new RulesParseError(m.file, m.line, m.column, m.reason)), true);
+        else finish(() => reject(new Error(m.message)), false);
+      };
+      let failure: Error | null = null;
+      const onError = (e: NodeJS.ErrnoException) => {
+        failure = e.code === 'ERR_WORKER_OUT_OF_MEMORY' ? new Error('these rules need more memory than the hosted playground allows') : e;
+      };
+      const onExit = (code: number) => finish(() => reject(failure ?? new Error(`comparison worker exited (${code})`)), false);
+      signal?.addEventListener('abort', onAbort, { once: true });
+      s.worker.on('message', onMessage);
+      s.worker.on('error', onError);
+      s.worker.once('exit', onExit);
       const job: Job = { emulator, base, head, config, maxRequests };
-      void ready.then(() => worker.postMessage(job));
+      void s.ready.then(() => {
+        if (!settled) s.worker.postMessage({ id, job });
+      });
     })) as WorkerRunDiff;
 
   run.ready = async () => {
-    restock();
-    await spare?.ready;
+    if (!closed) await current().ready;
   };
   run.close = async () => {
     closed = true;
-    const s = spare;
-    spare = null;
+    const s = slot;
+    slot = null;
     if (s) await s.worker.terminate();
   };
   return run;

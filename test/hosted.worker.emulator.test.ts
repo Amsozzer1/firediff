@@ -32,21 +32,27 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !existsSync(bundle))('ho
     expect(touched).toBe(true);
   }, 60_000);
 
-  it('starts the next worker ahead of time, so back-to-back runs skip loading it', async () => {
+  it('keeps the worker loaded between runs, and replaces it after an abort', async () => {
     const [b, h] = trap('trap-01');
     const run = workerRunDiff(bundle, 150);
     await run.ready();
-    const t0 = performance.now();
     const first = await run(emulatorFromEnv(), b, h, {});
-    const warm = performance.now() - t0;
-    await run.ready();
     expect(await run(emulatorFromEnv(), b, h, {})).toEqual(first);
-    // A cold worker has to load the whole bundle first; a waiting one doesn't.
-    const cold = workerRunDiff(bundle, 150);
-    const t1 = performance.now();
-    await cold(emulatorFromEnv(), b, h, {});
-    expect(performance.now() - t1).toBeGreaterThan(warm);
-    await Promise.all([run.close(), cold.close()]);
+    const ac = new AbortController();
+    const aborted = run(emulatorFromEnv(), slowRules(), slowRules(), {}, ac.signal);
+    setTimeout(() => ac.abort(new Error('stop')), 200);
+    await expect(aborted).rejects.toThrow('stop');
+    expect(await run(emulatorFromEnv(), b, h, {})).toEqual(first);
+    await run.close();
+  }, 60_000);
+
+  it('recycles the worker every N comparisons', async () => {
+    const [b, h] = trap('trap-02');
+    const run = workerRunDiff(bundle, 150, { recycleEvery: 2 });
+    const results = [];
+    for (let i = 0; i < 5; i++) results.push(await run(emulatorFromEnv(), b, h, {}));
+    expect(new Set(results.map((r) => JSON.stringify(r))).size).toBe(1);
+    await run.close();
   }, 60_000);
 
   it('reports parse errors with line and column', async () => {
