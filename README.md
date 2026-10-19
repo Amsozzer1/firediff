@@ -1,16 +1,21 @@
 # firediff
 
-![firediff's sticky comment on a pull request: four access changes, starting with "any signed-in user can list all docs" on users](docs/comment.png)
+**Diff Firestore security rules by behavior.** firediff is a CLI and GitHub Action that runs the old
+and new versions of your `firestore.rules` side by side in the Firestore emulator. It sends both the
+same generated requests: signed-out users, strangers, owners, users with custom claims or role docs.
+Then it reports only the requests whose allow/deny flipped: who gained access, who lost it, and a
+request you can replay for each. It's deterministic, doesn't use an LLM, and never touches a real
+Firebase project.
+
+[![npm](https://img.shields.io/npm/v/@amsozzer/firediff)](https://www.npmjs.com/package/@amsozzer/firediff)
+[![GitHub Marketplace](https://img.shields.io/badge/Marketplace-firediff-2ea44f?logo=github)](https://github.com/marketplace/actions/firediff)
+[![CI](https://github.com/Amsozzer1/firediff/actions/workflows/ci.yml/badge.svg)](https://github.com/Amsozzer1/firediff/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
+![firediff's sticky comment on a pull request: four access changes, starting with "any signed-in user can list all docs" on users](https://raw.githubusercontent.com/Amsozzer1/firediff/main/docs/comment.png)
 
 This is the comment firediff posted on a pull request that changed `allow read: if isOwner(uid)` to
 `allow read: if isSignedIn()` and dropped the update rule's guard on `role`.
-
-**See who a Firestore security rules change just let in.**
-
-firediff runs the old and new versions of your `firestore.rules` side by side in the Firestore
-emulator. It sends both the same generated requests: signed-out users, strangers, owners, users with
-custom claims or role docs. Then it reports only the requests whose allow/deny flipped. Every row
-comes with a request you can replay. It's deterministic and doesn't use an LLM.
 
 **[Try it in the browser →](https://firediff.amsozzer.com/)** No install: paste two rules files and compare.
 The hosted playground takes small files (up to 150 generated requests, 5 s per comparison); for
@@ -188,6 +193,59 @@ didn't test; it doesn't hide it.
 - Payload variety covers allowed values, the types the rules check, size bounds and `request.time`.
   Deeper validation (nested maps, regexes on fields) may need `firediff.yml` payloads.
 - App Check and Storage rules aren't tested.
+
+## How it compares
+
+| | firediff | `@firebase/rules-unit-testing` | Firebase console "Compare to Latest" | `git diff` |
+|---|---|---|---|---|
+| Shows | Requests whose allow/deny flipped: who, what, where | Pass/fail for the tests you wrote | Text diff of deployed versions | Text diff |
+| Test cases written by | firediff, from both versions of the rules | You | | |
+| Runs on every PR | Yes: a GitHub Action with a sticky comment | Yes, in your own workflow | No | Yes |
+| Needs a Firebase project | No (local emulator) | No (local emulator) | Yes | No |
+
+Unit tests and firediff work well together: tests pin the behavior you intend, and firediff shows what
+a change did beyond it.
+
+## FAQ
+
+### How do I test Firestore security rules changes in a pull request?
+
+Add the [GitHub Action](#github-action) to a workflow that runs on `pull_request`. Each PR gets one
+comment that lists every request whose result flipped between the base and head rules. The check
+fails when access was gained, so set `fail-on: never` if you only want the comment.
+
+### How is firediff different from `@firebase/rules-unit-testing`?
+
+`@firebase/rules-unit-testing` runs the tests you write, so it checks the cases you thought of.
+firediff writes the requests itself, from both versions of the rules, and reports only the
+differences between versions. It doesn't need any tests to exist.
+
+### Doesn't the Firebase console already compare rules versions?
+
+The console's "Compare to Latest" shows a text diff of deployed rules. firediff shows what that text
+change does: which caller can now read, list, create, update or delete which path. It runs before
+you deploy.
+
+### Does firediff need a Firebase project, credentials or firebase-tools?
+
+No. It runs against a local Firestore emulator, using throwaway project ids (`fd-base-…`, `fd-head-…`),
+and clears their data afterwards. The only network access is a one-time download of the emulator jar.
+
+### Does "no access changes" mean my rules are secure?
+
+No. firediff compares two versions and reports only the generated requests that flipped. It doesn't
+judge whether either version is safe. Rules it couldn't exercise are listed under "Changed in this
+PR, but never tested", "Couldn't test" and "Not exercised", so you know what to review by hand.
+
+### Does it work with Realtime Database or Cloud Storage rules?
+
+No. firediff tests Cloud Firestore security rules (`firestore.rules`). For Supabase row-level
+security, see [Lintel](https://github.com/Amsozzer1/lintel).
+
+### How long does a run take?
+
+In the study above, a median of about 11 s per pair of rules files and a p95 of about 45 s, on a
+laptop. In GitHub Actions, add Java setup; the emulator jar is cached between runs.
 
 ## Development
 

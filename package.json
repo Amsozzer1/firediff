@@ -1,14 +1,26 @@
 {
   "name": "@amsozzer/firediff",
   "version": "0.1.0",
-  "description": "Show who a Firestore security rules change just let in.",
+  "description": "Diff Firestore security rules by behavior: runs the old and new rules in the Firestore emulator and reports who gained or lost access. CLI and GitHub Action.",
   "keywords": [
-    "firebase",
     "firestore",
+    "firebase",
+    "firestore-security-rules",
+    "firebase-security-rules",
+    "firestore-rules",
     "security-rules",
+    "firebase-emulator",
+    "firestore-emulator",
     "github-action",
-    "security",
-    "emulator"
+    "github-actions",
+    "pull-request",
+    "diff",
+    "access-control",
+    "authorization",
+    "security-testing",
+    "appsec",
+    "ci",
+    "cli"
   ],
   "homepage": "https://github.com/Amsozzer1/firediff#readme",
   "bugs": {

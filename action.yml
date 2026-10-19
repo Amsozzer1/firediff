@@ -1,5 +1,5 @@
 name: firediff
-description: See who your Firestore rules PR just let in, as a sticky PR comment.
+description: Diff Firestore security rules on every pull request: see who gained or lost access, as one sticky comment.
 author: AMSOZZER
 branding:
   icon: shield
