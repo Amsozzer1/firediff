@@ -19,7 +19,8 @@ const USAGE = `usage:
   firediff --since <git-ref> [options]           compare <ref>:<rules> with the working tree
   firediff plan <base.rules> <head.rules> [--config firediff.yml] [--format text|json]
   firediff playground [--port 8787] [--host 127.0.0.1]   paste two rules files in a local web page
-  firediff playground --hosted [--trust-proxy | --ip-header <name>] [--max-requests 600] [--timeout 5]
+  firediff playground --hosted [--trust-proxy | --ip-header <name>] [--public-url <https://…>]
+                      [--max-requests 600] [--timeout 5]
                                                  the same page for a public server: size, request
                                                  and rate limits, and a self-restarting emulator
 
@@ -159,6 +160,7 @@ async function playground(args: string[]): Promise<number> {
       hosted: { type: 'boolean', default: false },
       'trust-proxy': { type: 'boolean', default: false },
       'ip-header': { type: 'string' },
+      'public-url': { type: 'string' },
       'max-requests': { type: 'string' },
       timeout: { type: 'string' },
     },
@@ -166,8 +168,8 @@ async function playground(args: string[]): Promise<number> {
   const port = Number(values.port);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new UsageError(`bad --port ${values.port}`);
   if (!values.hosted) {
-    if (values['trust-proxy'] || values['ip-header'] || values['max-requests'] || values.timeout) {
-      throw new UsageError('--trust-proxy, --ip-header, --max-requests and --timeout go with --hosted');
+    if (values['trust-proxy'] || values['ip-header'] || values['public-url'] || values['max-requests'] || values.timeout) {
+      throw new UsageError('--trust-proxy, --ip-header, --public-url, --max-requests and --timeout go with --hosted');
     }
     await withEmulator(async (emulator) => {
       const server = await listen(emulatorDiff(emulator), port, values.host!);
@@ -194,7 +196,7 @@ async function playground(args: string[]): Promise<number> {
   const supervisor = new EmulatorSupervisor(startWarmEmulator, runInWorker, limits, log);
   await Promise.all([supervisor.start(), runInWorker.ready()]);
   const server = await listen(supervisor.diff, port, values.host!, {
-    hosted: { limits, trustProxy: values['trust-proxy'], ipHeader: values['ip-header'], health: () => healthReport(supervisor.status(), hostMemory(), limits), log },
+    hosted: { limits, trustProxy: values['trust-proxy'], ipHeader: values['ip-header'], publicUrl: values['public-url'], health: () => healthReport(supervisor.status(), hostMemory(), limits), log },
   });
   const { port: actual } = server.address() as { port: number };
   log(`firediff playground (hosted): http://${values.host}:${actual}/  ${limits.maxRequests} requests, ${limits.timeoutMs / 1000} s per comparison`);

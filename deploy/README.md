@@ -28,6 +28,9 @@ The container settings are in [compose.yml](compose.yml):
 - The emulator listens on 127.0.0.1 inside the firediff container.
 - Rate limits use the visitor address Cloudflare puts in `CF-Connecting-IP`.
 
+The site also serves `robots.txt` (everything but `/api/`), `sitemap.xml` and `llms.txt`, and the
+page carries a canonical URL, Open Graph tags and schema.org data, all built from `--public-url`.
+
 Each comparison runs in two fresh projects (`fd-base-<hash>`, `fd-head-<hash>`), and their documents
 are cleared afterwards. Nothing is stored. The app logs only request counts and timings.
 

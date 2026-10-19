@@ -8,7 +8,7 @@ import { startEmulator, type EmulatorProcess } from '../run/emulator.js';
 import type { EmulatorAddress } from '../run/harness.js';
 import { runPair } from '../run/pipeline.js';
 import { clientKey, DiffTimeoutError, HOSTED_LIMITS, QueueFullError, RateLimiter, RunQueue, TooManyRequestsError, type Health, type HostedLimits, type RunDiff } from './hosted.js';
-import { EXAMPLE_BASE, EXAMPLE_HEAD, playgroundPage } from './page.js';
+import { EXAMPLE_BASE, EXAMPLE_HEAD, MARKETPLACE_URL, NPM_URL, playgroundPage, REPO_URL } from './page.js';
 
 /** What the page gets back for one comparison. */
 export interface DiffResult {
@@ -25,6 +25,8 @@ export interface HostedOptions {
   trustProxy?: boolean;
   /** Rate-limit on this header instead (cf-connecting-ip behind a Cloudflare Tunnel). Only when every request comes through that proxy. */
   ipHeader?: string;
+  /** The site's public address (https://…), for the canonical URL, robots.txt and sitemap.xml. */
+  publicUrl?: string;
   /** Served at /healthz: 200 when ok, 503 otherwise. */
   health?: () => Health;
   now?: () => number;
@@ -98,6 +100,7 @@ function contentSecurityPolicy(page: string): string {
     "default-src 'none'",
     `script-src 'sha256-${hash}'`,
     "style-src 'unsafe-inline'",
+    "img-src data:",
     "connect-src 'self'",
     "base-uri 'none'",
     "form-action 'none'",
@@ -106,6 +109,24 @@ function contentSecurityPolicy(page: string): string {
 }
 
 const kb = (bytes: number) => Math.ceil(bytes / 1024);
+
+/** A short, factual summary for AI assistants and coding agents (https://llmstxt.org). */
+const LLMS_TXT = `# firediff
+
+> Diff Firestore security rules by behavior. firediff is a CLI and GitHub Action that runs the old and new versions of a firestore.rules file in the Firestore emulator, sends both the same generated requests, and reports who gained or lost access, with a replayable request for each change. Deterministic, no LLM, never touches a real Firebase project. MIT licensed.
+
+- [README](${REPO_URL}#readme): install, GitHub Action, report format, firediff.yml, known limits
+- [npm package](${NPM_URL}): \`npx @amsozzer/firediff base.rules head.rules\`
+- [GitHub Marketplace](${MARKETPLACE_URL}): the Action
+- [Playground](/): paste two rules files and compare (small files only)
+
+## Quick answers
+
+- Check a Firestore rules change in a pull request: add \`uses: Amsozzer1/firediff@v0.1\` after \`actions/checkout\` in a workflow on \`pull_request\`, with \`pull-requests: write\` permission. It posts one sticky comment and fails the check when access was gained.
+- Compare two rules files locally: \`npx @amsozzer/firediff base.rules head.rules\` (Node 22+ and Java 21; it downloads the emulator once). Compare with a git ref: \`npx @amsozzer/firediff --since main\`.
+- Difference from @firebase/rules-unit-testing: unit tests check the cases you write; firediff generates the requests itself from both versions and reports only what changed between them. They complement each other.
+- What it doesn't do: it never says rules are safe, only which generated requests flipped. It tests Cloud Firestore rules, not Realtime Database or Cloud Storage rules.
+`;
 
 /**
  * HTTP handler for the playground: GET / serves the page, POST /api/diff runs one comparison,
@@ -117,7 +138,12 @@ export function playgroundHandler(diff: DiffFn, options: PlaygroundOptions = {})
   const limiter = limits ? new RateLimiter(limits.perMinute, limits.perDay, hosted!.now) : null;
   const queue = new RunQueue(limits ? limits.queue : Infinity);
   const maxBody = limits ? 2 * (2 * limits.rulesBytes + limits.configBytes) + 4096 : MAX_BODY;
-  const page = playgroundPage(limits ?? undefined);
+  const publicUrl = hosted?.publicUrl?.replace(/\/+$/, '');
+  const page = playgroundPage(limits ?? undefined, publicUrl);
+  const robots = ['User-agent: *', 'Allow: /', 'Disallow: /api/', ...(publicUrl ? ['', `Sitemap: ${publicUrl}/sitemap.xml`] : [])].join('\n') + '\n';
+  const sitemap = publicUrl
+    ? `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>${publicUrl}/</loc></url>\n</urlset>\n`
+    : null;
   const csp = contentSecurityPolicy(page);
   const log = hosted?.log ?? (() => {});
 
@@ -187,6 +213,11 @@ export function playgroundHandler(diff: DiffFn, options: PlaygroundOptions = {})
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? '/', 'http://localhost');
     if (req.method === 'GET' && url.pathname === '/') return send(res, 200, 'text/html; charset=utf-8', page, { 'content-security-policy': csp });
+    if (req.method === 'GET' && url.pathname === '/robots.txt') return send(res, 200, 'text/plain; charset=utf-8', robots, { 'cache-control': 'public, max-age=3600' });
+    if (req.method === 'GET' && url.pathname === '/sitemap.xml' && sitemap) {
+      return send(res, 200, 'application/xml; charset=utf-8', sitemap, { 'cache-control': 'public, max-age=3600' });
+    }
+    if (req.method === 'GET' && url.pathname === '/llms.txt') return send(res, 200, 'text/markdown; charset=utf-8', LLMS_TXT, { 'cache-control': 'public, max-age=3600' });
     if (req.method === 'GET' && url.pathname === '/healthz') {
       const h = hosted?.health?.() ?? { ok: true, problems: [] };
       return sendJson(res, h.ok ? 200 : 503, h);

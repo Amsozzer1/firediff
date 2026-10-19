@@ -31,6 +31,50 @@ export const EXAMPLE_HEAD = EXAMPLE_BASE.replace('allow read: if isOwner(uid);',
 
 const json = (v: unknown) => JSON.stringify(v).replace(/</g, '\\u003c');
 
+export const REPO_URL = 'https://github.com/Amsozzer1/firediff';
+export const NPM_URL = 'https://www.npmjs.com/package/@amsozzer/firediff';
+export const MARKETPLACE_URL = 'https://github.com/marketplace/actions/firediff';
+const SOCIAL_IMAGE = 'https://raw.githubusercontent.com/Amsozzer1/firediff/main/docs/social-preview.png';
+export const TITLE = 'firediff: Firestore security rules diff playground';
+export const DESCRIPTION =
+  'Paste two versions of your Firestore security rules and see who the change lets in or out: firediff runs both in the Firestore emulator and diffs the results.';
+const ICON = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#d1242f"/><path d="M9 8h14v4H13v3h8v4h-8v5H9z" fill="#fff"/></svg>')}`;
+
+const attr = (v: string) => v.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+
+/** Title, description, canonical URL, social tags and structured data. */
+function head(publicUrl?: string): string {
+  const url = publicUrl ? `${publicUrl.replace(/\/+$/, '')}/` : undefined;
+  const ld = {
+    '@context': 'https://schema.org',
+    '@type': 'SoftwareApplication',
+    name: 'firediff',
+    description: 'Diff Firestore security rules by behavior: a CLI and GitHub Action that runs the old and new rules in the Firestore emulator and reports who gained or lost access.',
+    applicationCategory: 'DeveloperApplication',
+    operatingSystem: 'Linux, macOS, Windows (Node 22 and Java 21)',
+    url: url ?? REPO_URL,
+    codeRepository: REPO_URL,
+    license: 'https://opensource.org/licenses/MIT',
+    offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+    sameAs: [REPO_URL, NPM_URL, MARKETPLACE_URL],
+  };
+  return [
+    `<title>${TITLE}</title>`,
+    `<meta name="description" content="${attr(DESCRIPTION)}">`,
+    url ? `<link rel="canonical" href="${attr(url)}">` : '',
+    `<link rel="icon" href="${attr(ICON)}">`,
+    `<meta property="og:type" content="website">`,
+    `<meta property="og:title" content="${attr(TITLE)}">`,
+    `<meta property="og:description" content="${attr(DESCRIPTION)}">`,
+    url ? `<meta property="og:url" content="${attr(url)}">` : '',
+    `<meta property="og:image" content="${SOCIAL_IMAGE}">`,
+    `<meta name="twitter:card" content="summary_large_image">`,
+    `<script type="application/ld+json">${json(ld)}</script>`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
 /** What the header says about where the comparison runs. */
 function about(hosted?: HostedLimits): string {
   if (!hosted) return 'Runs on a local emulator.';
@@ -39,13 +83,13 @@ function about(hosted?: HostedLimits): string {
 }
 
 /** The playground page: two editors, a Compare button, and the rendered report. No external resources. */
-export function playgroundPage(hosted?: HostedLimits): string {
+export function playgroundPage(hosted?: HostedLimits, publicUrl?: string): string {
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>firediff playground</title>
+${head(publicUrl)}
 <style>
   :root { --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --border: #d1d9e0; --panel: #f6f8fa; --accent: #d1242f; --ok: #1a7f37; --code: #eff2f5; }
   @media (prefers-color-scheme: dark) {
@@ -81,6 +125,11 @@ export function playgroundPage(hosted?: HostedLimits): string {
   #report pre code { background: none; padding: 0; }
   #report blockquote { margin: 8px 0; padding: 4px 12px; border-left: 4px solid var(--accent); color: var(--muted); }
   #report summary { cursor: pointer; font-weight: 600; margin: 8px 0; }
+  .about { color: var(--muted); max-width: 80ch; }
+  .about h2 { font-size: 16px; color: var(--fg); margin: 16px 0 4px; }
+  .about p { margin: 4px 0; }
+  .about a { color: inherit; }
+  .about code { background: var(--code); padding: 1px 4px; border-radius: 4px; font-size: 90%; }
 </style>
 </head>
 <body>
@@ -103,6 +152,18 @@ export function playgroundPage(hosted?: HostedLimits): string {
     <span id="status" role="status"></span>
   </div>
   <section id="report" aria-live="polite"></section>
+  <section class="about">
+    <h2>What is firediff?</h2>
+    <p>firediff diffs Firestore security rules by behavior. It runs the old and new rules side by side in the
+      Firestore emulator and sends both the same generated requests: signed-out users, strangers, owners, and users
+      with custom claims or role docs. It reports only the requests whose allow/deny flipped, each with a request you
+      can replay. It's deterministic and doesn't use an LLM, and it never touches a real Firebase project.</p>
+    <h2>Run it on every pull request</h2>
+    <p>Add <code>uses: Amsozzer1/firediff@v0.1</code> to a <code>pull_request</code> workflow. It posts one comment
+      per PR listing who gained or lost access, and fails the check when access was gained. Locally:
+      <code>npx @amsozzer/firediff base.rules head.rules</code>, or <code>npx @amsozzer/firediff --since main</code>.</p>
+    <p><a href="${REPO_URL}">GitHub</a> · <a href="${NPM_URL}">npm</a> · <a href="${MARKETPLACE_URL}">GitHub Marketplace</a> · MIT licensed</p>
+  </section>
 </main>
 <script>
   const EXAMPLE = { base: ${json(EXAMPLE_BASE)}, head: ${json(EXAMPLE_HEAD)} };

@@ -146597,8 +146597,8 @@ function dedupe(rs) {
 function compareRequests(a, b) {
   return a.doc.localeCompare(b.doc) || OP_ORDER.indexOf(a.request.op) - OP_ORDER.indexOf(b.request.op) || requestKey(a.request).localeCompare(requestKey(b.request)) || (a.only ?? []).join(",").localeCompare((b.only ?? []).join(","));
 }
-function buildPlan(base, head, config2 = {}) {
-  return new Builder([base, head], config2).build();
+function buildPlan(base, head2, config2 = {}) {
+  return new Builder([base, head2], config2).build();
 }
 function expandCases(plan2) {
   const cases = [];
@@ -146699,12 +146699,12 @@ function table(rows, indent = "  ") {
   return rows.map((r) => indent + r.map((c, i) => i === r.length - 1 ? c : c.padEnd(widths[i])).join("  ").trimEnd());
 }
 var json = (v) => JSON.stringify(v);
-function formatPlan(plan2, base, head) {
+function formatPlan(plan2, base, head2) {
   const cases = expandCases(plan2);
   const out = [
     "firediff plan",
     `  base: ${base.file} (rules_version ${base.version.declared ?? `undeclared, v${base.version.effective} semantics`})`,
-    `  head: ${head.file} (rules_version ${head.version.declared ?? `undeclared, v${head.version.effective} semantics`})`,
+    `  head: ${head2.file} (rules_version ${head2.version.declared ?? `undeclared, v${head2.version.effective} semantics`})`,
     "",
     `principals (${plan2.principals.length})`,
     ...table(
@@ -146967,8 +146967,8 @@ var RateLimiter = class {
   }
 };
 function ipv6Groups(ip) {
-  const [head, tail] = ip.split("::");
-  const h = head ? head.split(":") : [];
+  const [head2, tail] = ip.split("::");
+  const h = head2 ? head2.split(":") : [];
   if (tail === void 0) return h;
   const t = tail ? tail.split(":") : [];
   return [...h, ...Array(8 - h.length - t.length).fill("0"), ...t];
@@ -147049,11 +147049,11 @@ var EmulatorSupervisor = class {
   async start() {
     await this.ready();
   }
-  diff = async (base, head, config2) => {
+  diff = async (base, head2, config2) => {
     const em = await this.ready();
     const ac = new AbortController();
     let touched = false;
-    const run2 = this.runDiff(em.address, base, head, config2, ac.signal, () => {
+    const run2 = this.runDiff(em.address, base, head2, config2, ac.signal, () => {
       touched = true;
     });
     run2.catch(() => void 0);
@@ -147328,9 +147328,9 @@ function allowsAt(ranges, line) {
   return ranges.filter((r) => r.ranges.slice(1).some(([a, b]) => line >= a && line <= b)).map((r) => r.ref);
 }
 var allowKey = (block, allow) => `${block.documentPath ?? block.path} ${allow.ops.join(",")}: ${print(allow.inlined)}`;
-function changedAllows(base, head) {
+function changedAllows(base, head2) {
   const baseKeys = new Set(base.matches.flatMap((b) => b.allows.map((a) => allowKey(b, a))));
-  return new Set(head.matches.flatMap((b) => b.allows.filter((a) => !baseKeys.has(allowKey(b, a)))));
+  return new Set(head2.matches.flatMap((b) => b.allows.filter((a) => !baseKeys.has(allowKey(b, a)))));
 }
 
 // src/report/coverage-guard.ts
@@ -147406,7 +147406,7 @@ function* walk2(e) {
   for (const k of kids) yield* walk2(k);
 }
 var isAppCheck = (e) => e.kind === "member" && (e.property === "app" || e.property === "appcheck") && e.object.kind === "var" && e.object.name === "request";
-function missingPiece(row, head, seeds) {
+function missingPiece(row, head2, seeds) {
   if (row.head.result !== "deny") return null;
   const req = row.case.request;
   const target = requestTarget(req);
@@ -147416,7 +147416,7 @@ function missingPiece(row, head, seeds) {
   const seedOf = (p) => seeds.find((s) => s.path === p)?.data ?? {};
   const uid = row.case.principal.auth?.uid;
   const docPath2 = req.op === "list" ? `${target}/__firediff_doc__` : groupTarget(req);
-  for (const { block, bindings } of matchDocument(head, docPath2)) {
+  for (const { block, bindings } of matchDocument(head2, docPath2)) {
     const db = block.segments[1]?.kind === "wildcard" ? block.segments[1].name : null;
     for (const allow of block.allows) {
       if (!lines.has(allow.loc.line) || !allow.ops.includes(req.op)) continue;
@@ -147552,9 +147552,9 @@ function isOwned(path, seeds) {
 function countConditions(model) {
   return model.matches.flatMap((b) => b.allows).filter((a) => a.conditionLoc && a.condition.kind !== "literal").length;
 }
-function splitUntested(unexercised, skips, base, head) {
-  const changed = changedAllows(base, head);
-  const ranges = allowRanges(head);
+function splitUntested(unexercised, skips, base, head2) {
+  const changed = changedAllows(base, head2);
+  const ranges = allowRanges(head2);
   const changedUntested = [];
   const rest = { unexercised: [], skips: [] };
   const changedAt = (line) => allowsAt(ranges, line).filter((r) => changed.has(r.allow)).map((r) => r.allow.loc.line);
@@ -147571,11 +147571,11 @@ function splitUntested(unexercised, skips, base, head) {
   changedUntested.sort((a, b) => a.line - b.line);
   return { changedUntested, rest };
 }
-function notExercisedItems(unexercised, skips, errors, head, hadChangedUntested) {
+function notExercisedItems(unexercised, skips, errors, head2, hadChangedUntested) {
   const items = [];
   if (unexercised === null) items.push({ line: null, text: "Coverage was unavailable, so expressions that never evaluated true are not listed." });
   else if (unexercised.length === 0 && !hadChangedUntested) {
-    const n = countConditions(head);
+    const n = countConditions(head2);
     items.push({
       line: null,
       text: n ? `All ${n} allow condition${n === 1 ? "" : "s"} in head ${n === 1 ? "was" : "were"} reached by at least one request.` : "Head has no allow conditions other than literal true or false."
@@ -148163,9 +148163,9 @@ async function execute(db, req) {
   }
 }
 var RulesPair = class _RulesPair {
-  constructor(base, head, emulator, ids) {
+  constructor(base, head2, emulator, ids) {
     this.base = base;
-    this.head = head;
+    this.head = head2;
     this.emulator = emulator;
     this.ids = ids;
   }
@@ -148176,11 +148176,11 @@ var RulesPair = class _RulesPair {
   static async open(baseRules, headRules, emulator) {
     common_C1sORuFu_node_setLogLevel("silent");
     const ids = projectIds(baseRules, headRules);
-    const [base, head] = await Promise.all([
+    const [base, head2] = await Promise.all([
       initializeTestEnvironment({ projectId: ids.base, firestore: { ...emulator, rules: baseRules } }),
       initializeTestEnvironment({ projectId: ids.head, firestore: { ...emulator, rules: headRules } })
     ]);
-    return new _RulesPair(new Side(base), new Side(head), emulator, ids);
+    return new _RulesPair(new Side(base), new Side(head2), emulator, ids);
   }
   /** The emulator's ruleCoverage report for one side (see src/coverage). */
   async coverage(side) {
@@ -148200,7 +148200,7 @@ var RulesPair = class _RulesPair {
       if (req.op === "create" && seedByPath.has(req.path)) {
         await Promise.all([this.base.restore(req.path, void 0), this.head.restore(req.path, void 0)]);
       }
-      const [base, head] = await Promise.all([
+      const [base, head2] = await Promise.all([
         execute(this.base.db(c.principal), req),
         execute(this.head.db(c.principal), req)
       ]);
@@ -148210,10 +148210,10 @@ var RulesPair = class _RulesPair {
         const removed = req.op === "create" && seed !== void 0;
         await Promise.all([
           base.result === "allow" || removed ? this.base.restore(path, seed) : void 0,
-          head.result === "allow" || removed ? this.head.restore(path, seed) : void 0
+          head2.result === "allow" || removed ? this.head.restore(path, seed) : void 0
         ]);
       }
-      rows.push({ case: c, base, head });
+      rows.push({ case: c, base, head: head2 });
     }
     return rows;
   }
@@ -148266,12 +148266,12 @@ function findTimeLimits(source, model) {
     }));
   });
 }
-function timeLimitChanges(base, head, headModel) {
+function timeLimitChanges(base, head2, headModel) {
   const out = [];
   const headKeys = new Map(headModel.matches.flatMap((b) => b.allows.map((a) => [`${b.documentPath ?? b.path} ${a.ops.join(",")}`, a.loc.line])));
   const where = (key2) => `\`${key2.split(" ")[0] || "/"}\` ${key2.split(" ")[1]}`;
   for (const b of base) {
-    const h = head.find((x) => x.key === b.key && x.kind === b.kind);
+    const h = head2.find((x) => x.key === b.key && x.kind === b.kind);
     const word = b.kind === "until" ? "until" : "from";
     if (!h) {
       const headLine = headKeys.get(b.key);
@@ -148291,7 +148291,7 @@ function timeLimitChanges(base, head, headModel) {
       });
     }
   }
-  for (const h of head) {
+  for (const h of head2) {
     if (base.some((x) => x.key === h.key && x.kind === h.kind)) continue;
     out.push({ direction: "lost", line: h.line, text: `L${h.line} ${where(h.key)}: now open only ${h.kind === "until" ? "until" : "from"} ${h.date}` });
   }
@@ -148300,15 +148300,15 @@ function timeLimitChanges(base, head, headModel) {
 
 // src/run/pipeline.ts
 var fromFile = (file) => ({ label: file, source: stripBom((0,external_fs_.readFileSync)(file, "utf8")) });
-async function runPair(base, head, emulator, config2 = {}, signal) {
+async function runPair(base, head2, emulator, config2 = {}, signal) {
   const t0 = performance.now();
   const baseModel = parseRules(base.source, base.label);
-  const headModel = parseRules(head.source, head.label);
+  const headModel = parseRules(head2.source, head2.label);
   const plan2 = buildPlan(baseModel, headModel, config2);
   const cases = expandCases(plan2);
   const t1 = performance.now();
   const baseSrc = stripBom(base.source);
-  const headSrc = stripBom(head.source);
+  const headSrc = stripBom(head2.source);
   const timeChanges = timeLimitChanges(findTimeLimits(baseSrc, baseModel), findTimeLimits(headSrc, headModel), headModel);
   signal?.throwIfAborted();
   const pair = await RulesPair.open(neutralizeTimeLimits(baseSrc), neutralizeTimeLimits(headSrc), emulator);
@@ -148370,18 +148370,55 @@ var EXAMPLE_HEAD = EXAMPLE_BASE.replace("allow read: if isOwner(uid);", "allow r
   "allow update: if isOwner(uid);"
 );
 var json2 = (v) => JSON.stringify(v).replace(/</g, "\\u003c");
+var REPO_URL = "https://github.com/Amsozzer1/firediff";
+var NPM_URL = "https://www.npmjs.com/package/@amsozzer/firediff";
+var MARKETPLACE_URL = "https://github.com/marketplace/actions/firediff";
+var SOCIAL_IMAGE = "https://raw.githubusercontent.com/Amsozzer1/firediff/main/docs/social-preview.png";
+var TITLE = "firediff: Firestore security rules diff playground";
+var DESCRIPTION = "Paste two versions of your Firestore security rules and see who the change lets in or out: firediff runs both in the Firestore emulator and diffs the results.";
+var ICON = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#d1242f"/><path d="M9 8h14v4H13v3h8v4h-8v5H9z" fill="#fff"/></svg>')}`;
+var attr = (v) => v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+function head(publicUrl) {
+  const url = publicUrl ? `${publicUrl.replace(/\/+$/, "")}/` : void 0;
+  const ld = {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    name: "firediff",
+    description: "Diff Firestore security rules by behavior: a CLI and GitHub Action that runs the old and new rules in the Firestore emulator and reports who gained or lost access.",
+    applicationCategory: "DeveloperApplication",
+    operatingSystem: "Linux, macOS, Windows (Node 22 and Java 21)",
+    url: url ?? REPO_URL,
+    codeRepository: REPO_URL,
+    license: "https://opensource.org/licenses/MIT",
+    offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+    sameAs: [REPO_URL, NPM_URL, MARKETPLACE_URL]
+  };
+  return [
+    `<title>${TITLE}</title>`,
+    `<meta name="description" content="${attr(DESCRIPTION)}">`,
+    url ? `<link rel="canonical" href="${attr(url)}">` : "",
+    `<link rel="icon" href="${attr(ICON)}">`,
+    `<meta property="og:type" content="website">`,
+    `<meta property="og:title" content="${attr(TITLE)}">`,
+    `<meta property="og:description" content="${attr(DESCRIPTION)}">`,
+    url ? `<meta property="og:url" content="${attr(url)}">` : "",
+    `<meta property="og:image" content="${SOCIAL_IMAGE}">`,
+    `<meta name="twitter:card" content="summary_large_image">`,
+    `<script type="application/ld+json">${json2(ld)}</script>`
+  ].filter(Boolean).join("\n");
+}
 function about(hosted) {
   if (!hosted) return "Runs on a local emulator.";
   return `Runs in a Firestore emulator on this server; nothing is stored. Up to ${hosted.rulesBytes / 1024} KB per file and ${hosted.maxRequests} requests.
     For bigger files, run <code>npx @amsozzer/firediff</code> (<a href="https://github.com/Amsozzer1/firediff">GitHub</a>).`;
 }
-function playgroundPage(hosted) {
+function playgroundPage(hosted, publicUrl) {
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>firediff playground</title>
+${head(publicUrl)}
 <style>
   :root { --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --border: #d1d9e0; --panel: #f6f8fa; --accent: #d1242f; --ok: #1a7f37; --code: #eff2f5; }
   @media (prefers-color-scheme: dark) {
@@ -148417,6 +148454,11 @@ function playgroundPage(hosted) {
   #report pre code { background: none; padding: 0; }
   #report blockquote { margin: 8px 0; padding: 4px 12px; border-left: 4px solid var(--accent); color: var(--muted); }
   #report summary { cursor: pointer; font-weight: 600; margin: 8px 0; }
+  .about { color: var(--muted); max-width: 80ch; }
+  .about h2 { font-size: 16px; color: var(--fg); margin: 16px 0 4px; }
+  .about p { margin: 4px 0; }
+  .about a { color: inherit; }
+  .about code { background: var(--code); padding: 1px 4px; border-radius: 4px; font-size: 90%; }
 </style>
 </head>
 <body>
@@ -148439,6 +148481,18 @@ function playgroundPage(hosted) {
     <span id="status" role="status"></span>
   </div>
   <section id="report" aria-live="polite"></section>
+  <section class="about">
+    <h2>What is firediff?</h2>
+    <p>firediff diffs Firestore security rules by behavior. It runs the old and new rules side by side in the
+      Firestore emulator and sends both the same generated requests: signed-out users, strangers, owners, and users
+      with custom claims or role docs. It reports only the requests whose allow/deny flipped, each with a request you
+      can replay. It's deterministic and doesn't use an LLM, and it never touches a real Firebase project.</p>
+    <h2>Run it on every pull request</h2>
+    <p>Add <code>uses: Amsozzer1/firediff@v0.1</code> to a <code>pull_request</code> workflow. It posts one comment
+      per PR listing who gained or lost access, and fails the check when access was gained. Locally:
+      <code>npx @amsozzer/firediff base.rules head.rules</code>, or <code>npx @amsozzer/firediff --since main</code>.</p>
+    <p><a href="${REPO_URL}">GitHub</a> \xB7 <a href="${NPM_URL}">npm</a> \xB7 <a href="${MARKETPLACE_URL}">GitHub Marketplace</a> \xB7 MIT licensed</p>
+  </section>
 </main>
 <script>
   const EXAMPLE = { base: ${json2(EXAMPLE_BASE)}, head: ${json2(EXAMPLE_HEAD)} };
@@ -148500,9 +148554,9 @@ function playgroundPage(hosted) {
 // src/playground/server.ts
 var MAX_BODY = 512 * 1024;
 var LOCALLY = "Run it locally: npx @amsozzer/firediff base.rules head.rules";
-var runDiff = async (emulator, base, head, config2, signal, onEmulator) => {
+var runDiff = async (emulator, base, head2, config2, signal, onEmulator) => {
   onEmulator?.();
-  const result = await runPair({ label: "base.rules", source: base }, { label: "head.rules", source: head }, emulator, config2, signal);
+  const result = await runPair({ label: "base.rules", source: base }, { label: "head.rules", source: head2 }, emulator, config2, signal);
   const report = buildReport(result);
   return { markdown: renderMarkdown(report), counts: { gained: report.gained.length, lost: report.lost.length, requests: report.requests } };
 };
@@ -148517,7 +148571,7 @@ async function startWarmEmulator(runs = 3) {
   return em;
 }
 function emulatorDiff(emulator) {
-  return (base, head, config2) => runDiff(emulator, base, head, config2);
+  return (base, head2, config2) => runDiff(emulator, base, head2, config2);
 }
 function send(res, status, type, body, headers = {}) {
   res.writeHead(status, { "content-type": type, "cache-control": "no-store", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", ...headers });
@@ -148546,6 +148600,7 @@ function contentSecurityPolicy(page) {
     "default-src 'none'",
     `script-src 'sha256-${hash}'`,
     "style-src 'unsafe-inline'",
+    "img-src data:",
     "connect-src 'self'",
     "base-uri 'none'",
     "form-action 'none'",
@@ -148553,13 +148608,36 @@ function contentSecurityPolicy(page) {
   ].join("; ");
 }
 var kb = (bytes) => Math.ceil(bytes / 1024);
+var LLMS_TXT = `# firediff
+
+> Diff Firestore security rules by behavior. firediff is a CLI and GitHub Action that runs the old and new versions of a firestore.rules file in the Firestore emulator, sends both the same generated requests, and reports who gained or lost access, with a replayable request for each change. Deterministic, no LLM, never touches a real Firebase project. MIT licensed.
+
+- [README](${REPO_URL}#readme): install, GitHub Action, report format, firediff.yml, known limits
+- [npm package](${NPM_URL}): \`npx @amsozzer/firediff base.rules head.rules\`
+- [GitHub Marketplace](${MARKETPLACE_URL}): the Action
+- [Playground](/): paste two rules files and compare (small files only)
+
+## Quick answers
+
+- Check a Firestore rules change in a pull request: add \`uses: Amsozzer1/firediff@v0.1\` after \`actions/checkout\` in a workflow on \`pull_request\`, with \`pull-requests: write\` permission. It posts one sticky comment and fails the check when access was gained.
+- Compare two rules files locally: \`npx @amsozzer/firediff base.rules head.rules\` (Node 22+ and Java 21; it downloads the emulator once). Compare with a git ref: \`npx @amsozzer/firediff --since main\`.
+- Difference from @firebase/rules-unit-testing: unit tests check the cases you write; firediff generates the requests itself from both versions and reports only what changed between them. They complement each other.
+- What it doesn't do: it never says rules are safe, only which generated requests flipped. It tests Cloud Firestore rules, not Realtime Database or Cloud Storage rules.
+`;
 function playgroundHandler(diff, options = {}) {
   const hosted = options.hosted;
   const limits = hosted ? { ...HOSTED_LIMITS, ...hosted.limits } : null;
   const limiter = limits ? new RateLimiter(limits.perMinute, limits.perDay, hosted.now) : null;
   const queue = new RunQueue(limits ? limits.queue : Infinity);
   const maxBody = limits ? 2 * (2 * limits.rulesBytes + limits.configBytes) + 4096 : MAX_BODY;
-  const page = playgroundPage(limits ?? void 0);
+  const publicUrl = hosted?.publicUrl?.replace(/\/+$/, "");
+  const page = playgroundPage(limits ?? void 0, publicUrl);
+  const robots = ["User-agent: *", "Allow: /", "Disallow: /api/", ...publicUrl ? ["", `Sitemap: ${publicUrl}/sitemap.xml`] : []].join("\n") + "\n";
+  const sitemap = publicUrl ? `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>${publicUrl}/</loc></url>
+</urlset>
+` : null;
   const csp = contentSecurityPolicy(page);
   const log = hosted?.log ?? (() => {
   });
@@ -148579,10 +148657,10 @@ function playgroundHandler(diff, options = {}) {
       return sendJson(res, 400, { error: "base and head must be rules text" });
     }
     const base = input.base;
-    const head = input.head;
+    const head2 = input.head;
     const configText = typeof input.config === "string" ? input.config : "";
     if (limits) {
-      for (const [name, text] of [["base.rules", base], ["head.rules", head]]) {
+      for (const [name, text] of [["base.rules", base], ["head.rules", head2]]) {
         const size = Buffer.byteLength(text);
         if (size > limits.rulesBytes) {
           return sendJson(res, 413, { error: `${name} is ${kb(size)} KB; the hosted playground takes up to ${kb(limits.rulesBytes)} KB per file. ${LOCALLY}` });
@@ -148595,11 +148673,11 @@ function playgroundHandler(diff, options = {}) {
     try {
       if (!limits) {
         parseRules(base, "base.rules");
-        parseRules(head, "head.rules");
+        parseRules(head2, "head.rules");
       }
       const config2 = configText.trim() ? parseConfig(configText, "firediff.yml") : {};
       const t0 = performance.now();
-      const result = await queue.run(() => diff(base, head, config2));
+      const result = await queue.run(() => diff(base, head2, config2));
       log(`compared: ${result.counts.requests} requests, ${Math.round(performance.now() - t0)} ms`);
       const html = await marked.parse(result.markdown, { gfm: true });
       return sendJson(res, 200, { ...result, html });
@@ -148624,6 +148702,11 @@ function playgroundHandler(diff, options = {}) {
   return async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     if (req.method === "GET" && url.pathname === "/") return send(res, 200, "text/html; charset=utf-8", page, { "content-security-policy": csp });
+    if (req.method === "GET" && url.pathname === "/robots.txt") return send(res, 200, "text/plain; charset=utf-8", robots, { "cache-control": "public, max-age=3600" });
+    if (req.method === "GET" && url.pathname === "/sitemap.xml" && sitemap) {
+      return send(res, 200, "application/xml; charset=utf-8", sitemap, { "cache-control": "public, max-age=3600" });
+    }
+    if (req.method === "GET" && url.pathname === "/llms.txt") return send(res, 200, "text/markdown; charset=utf-8", LLMS_TXT, { "cache-control": "public, max-age=3600" });
     if (req.method === "GET" && url.pathname === "/healthz") {
       const h = hosted?.health?.() ?? { ok: true, problems: [] };
       return sendJson(res, h.ok ? 200 : 503, h);
@@ -148652,8 +148735,8 @@ var MARK = "firediffComparisonWorker";
 async function serve(job, post) {
   try {
     const base = parseRules(job.base, "base.rules");
-    const head = parseRules(job.head, "head.rules");
-    const requests = expandCases(buildPlan(base, head, job.config)).length;
+    const head2 = parseRules(job.head, "head.rules");
+    const requests = expandCases(buildPlan(base, head2, job.config)).length;
     if (requests > job.maxRequests) return post({ kind: "too-many", requests });
     post({ kind: "emulator" });
     post({ kind: "done", result: await runDiff(job.emulator, job.base, job.head, job.config) });
@@ -148692,7 +148775,7 @@ function workerRunDiff(entry, maxRequests, opts = {}) {
     if (!slot || slot.dead) slot = spawn2();
     return slot;
   };
-  const run2 = ((emulator, base, head, config2, signal, onEmulator) => new Promise((resolve, reject) => {
+  const run2 = ((emulator, base, head2, config2, signal, onEmulator) => new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(signal.reason);
     const s = current();
     const id = nextId++;
@@ -148729,7 +148812,7 @@ function workerRunDiff(entry, maxRequests, opts = {}) {
     s.worker.on("message", onMessage);
     s.worker.on("error", onError);
     s.worker.once("exit", onExit);
-    const job = { emulator, base, head, config: config2, maxRequests };
+    const job = { emulator, base, head: head2, config: config2, maxRequests };
     void s.ready.then(() => {
       if (!settled) s.worker.postMessage({ id, job });
     });
@@ -148772,7 +148855,8 @@ var USAGE = `usage:
   firediff --since <git-ref> [options]           compare <ref>:<rules> with the working tree
   firediff plan <base.rules> <head.rules> [--config firediff.yml] [--format text|json]
   firediff playground [--port 8787] [--host 127.0.0.1]   paste two rules files in a local web page
-  firediff playground --hosted [--trust-proxy | --ip-header <name>] [--max-requests 600] [--timeout 5]
+  firediff playground --hosted [--trust-proxy | --ip-header <name>] [--public-url <https://\u2026>]
+                      [--max-requests 600] [--timeout 5]
                                                  the same page for a public server: size, request
                                                  and rate limits, and a self-restarting emulator
 
@@ -148804,12 +148888,12 @@ function plan(args) {
     options: { config: { type: "string" }, format: { type: "string", default: "text" } }
   });
   if (positionals.length !== 2) throw new UsageError("plan needs <base.rules> <head.rules>");
-  const [base, head] = positionals.map((f) => parseRules((0,external_fs_.readFileSync)(f, "utf8"), f));
-  const p = buildPlan(base, head, config(values.config));
+  const [base, head2] = positionals.map((f) => parseRules((0,external_fs_.readFileSync)(f, "utf8"), f));
+  const p = buildPlan(base, head2, config(values.config));
   if (values.format === "json") {
-    process.stdout.write(JSON.stringify({ base: base.file, head: head.file, ...p, cases: expandCases(p).length }, null, 2) + "\n");
+    process.stdout.write(JSON.stringify({ base: base.file, head: head2.file, ...p, cases: expandCases(p).length }, null, 2) + "\n");
   } else if (values.format === "text") {
-    process.stdout.write(formatPlan(p, base, head));
+    process.stdout.write(formatPlan(p, base, head2));
   } else {
     throw new UsageError(`unknown --format ${values.format}`);
   }
@@ -148904,6 +148988,7 @@ async function playground(args) {
       hosted: { type: "boolean", default: false },
       "trust-proxy": { type: "boolean", default: false },
       "ip-header": { type: "string" },
+      "public-url": { type: "string" },
       "max-requests": { type: "string" },
       timeout: { type: "string" }
     }
@@ -148911,8 +148996,8 @@ async function playground(args) {
   const port = Number(values.port);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new UsageError(`bad --port ${values.port}`);
   if (!values.hosted) {
-    if (values["trust-proxy"] || values["ip-header"] || values["max-requests"] || values.timeout) {
-      throw new UsageError("--trust-proxy, --ip-header, --max-requests and --timeout go with --hosted");
+    if (values["trust-proxy"] || values["ip-header"] || values["public-url"] || values["max-requests"] || values.timeout) {
+      throw new UsageError("--trust-proxy, --ip-header, --public-url, --max-requests and --timeout go with --hosted");
     }
     await withEmulator(async (emulator) => {
       const server2 = await listen(emulatorDiff(emulator), port, values.host);
@@ -148938,7 +149023,7 @@ async function playground(args) {
   const supervisor = new EmulatorSupervisor(startWarmEmulator, runInWorker, limits, log);
   await Promise.all([supervisor.start(), runInWorker.ready()]);
   const server = await listen(supervisor.diff, port, values.host, {
-    hosted: { limits, trustProxy: values["trust-proxy"], ipHeader: values["ip-header"], health: () => healthReport(supervisor.status(), hostMemory(), limits), log }
+    hosted: { limits, trustProxy: values["trust-proxy"], ipHeader: values["ip-header"], publicUrl: values["public-url"], health: () => healthReport(supervisor.status(), hostMemory(), limits), log }
   });
   const { port: actual } = server.address();
   log(`firediff playground (hosted): http://${values.host}:${actual}/  ${limits.maxRequests} requests, ${limits.timeoutMs / 1e3} s per comparison`);

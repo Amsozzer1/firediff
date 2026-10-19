@@ -197,6 +197,45 @@ describe('playground --hosted', () => {
     expect((await fetch(`${s.url}/healthz`)).status).toBe(503);
   });
 
+  it('gives search engines a title, description, canonical URL, social tags and structured data', async () => {
+    const s = await start(ok, { publicUrl: 'https://play.example' });
+    const html = await (await fetch(`${s.url}/`)).text();
+    expect(html).toMatch(/<title>[^<]*Firestore security rules[^<]*<\/title>/i);
+    expect(html).toMatch(/<meta name="description" content="[^"]{70,170}">/);
+    expect(html).toContain('<link rel="canonical" href="https://play.example/">');
+    expect(html).toContain('<meta property="og:url" content="https://play.example/">');
+    expect(html).toMatch(/<meta property="og:image" content="https:\/\/[^"]+\.png">/);
+    expect(html).toContain('<meta name="twitter:card" content="summary_large_image">');
+    const ld = JSON.parse(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(html)![1]!);
+    expect(ld).toMatchObject({ '@type': 'SoftwareApplication', name: 'firediff', applicationCategory: 'DeveloperApplication', url: 'https://play.example/' });
+    // Readable text for crawlers and answer engines, not only two empty editors.
+    expect(html).toMatch(/<h2[^>]*>What is firediff\?<\/h2>/);
+    expect(html).toContain('https://github.com/Amsozzer1/firediff');
+  });
+
+  it('serves robots.txt, sitemap.xml and llms.txt', async () => {
+    const s = await start(ok, { publicUrl: 'https://play.example' });
+    const robots = await (await fetch(`${s.url}/robots.txt`)).text();
+    expect(robots).toMatch(/User-agent: \*\nAllow: \/\nDisallow: \/api\//);
+    expect(robots).toContain('Sitemap: https://play.example/sitemap.xml');
+    const sitemap = await fetch(`${s.url}/sitemap.xml`);
+    expect(sitemap.headers.get('content-type')).toMatch(/xml/);
+    expect(await sitemap.text()).toContain('<loc>https://play.example/</loc>');
+    const llms = await fetch(`${s.url}/llms.txt`);
+    expect(llms.headers.get('content-type')).toMatch(/text\/(plain|markdown)/);
+    const text = await llms.text();
+    expect(text).toMatch(/^# firediff\n\n> /);
+    expect(text).toContain('npx @amsozzer/firediff');
+    expect(text).toContain('uses: Amsozzer1/firediff@v0.1');
+  });
+
+  it('leaves the canonical URL and sitemap out without --public-url', async () => {
+    const s = await start(ok, {});
+    expect(await (await fetch(`${s.url}/`)).text()).not.toContain('rel="canonical"');
+    expect((await fetch(`${s.url}/sitemap.xml`)).status).toBe(404);
+    expect(await (await fetch(`${s.url}/robots.txt`)).text()).not.toContain('Sitemap:');
+  });
+
   it('sends a content security policy that only allows the page itself', async () => {
     const s = await start(ok, {});
     const csp = (await fetch(`${s.url}/`)).headers.get('content-security-policy')!;
