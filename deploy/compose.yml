@@ -2,6 +2,9 @@
 # Nothing is published on the host and nothing is mounted: cloudflared dials out to Cloudflare, and
 # Cloudflare sends firediff.amsozzer.com traffic back down that connection to http://firediff:8787.
 # Put TUNNEL_TOKEN in deploy/.env (see .env.example and README.md).
+# An explicit project name, so it can't merge with another compose project in a folder called deploy.
+name: firediff
+
 services:
   firediff:
     build: ..
