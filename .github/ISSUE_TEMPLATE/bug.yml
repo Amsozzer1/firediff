@@ -1,0 +1,20 @@
+name: Bug
+description: firediff crashed, couldn't run, or the Action or playground misbehaved.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Include the command or workflow, and the output.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: firediff version
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: OS, Node version, Java version (or the runner image).

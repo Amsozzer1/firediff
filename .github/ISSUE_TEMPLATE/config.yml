@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability in firediff
+    url: https://github.com/Amsozzer1/firediff/security/advisories/new
+    about: Report it privately, not as an issue.
+  - name: Try a change in the playground
+    url: https://firediff.amsozzer.com/
+    about: Paste two rules files and see the report, no install.

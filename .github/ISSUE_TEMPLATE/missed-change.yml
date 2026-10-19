@@ -1,0 +1,37 @@
+name: Missed or wrong access change
+description: firediff didn't report an access change, or reported one that isn't real.
+labels: [accuracy]
+body:
+  - type: textarea
+    id: base
+    attributes:
+      label: Base rules
+      description: The smallest version of the old rules that shows the problem.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: head
+    attributes:
+      label: Head rules
+      description: The new rules.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should have been reported
+      description: Who, which operation (get, list, create, update, delete), which path. Or which row is wrong, and why.
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: firediff.yml (if any)
+      render: yaml
+  - type: input
+    id: version
+    attributes:
+      label: firediff version
+      description: npm version, or the Action ref (e.g. v0.1).
