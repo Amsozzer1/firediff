@@ -12,6 +12,10 @@ emulator. It sends both the same generated requests: signed-out users, strangers
 custom claims or role docs. Then it reports only the requests whose allow/deny flipped. Every row
 comes with a request you can replay. It's deterministic and doesn't use an LLM.
 
+<!-- Switch on once the hosted playground is live (deploy/README.md), with the real subdomain:
+**[Try it in the browser →](https://PLAYGROUND_DOMAIN/)** No install: paste two rules files and compare.
+-->
+
 ## Requirements
 
 - Node 22+
@@ -193,6 +197,8 @@ pnpm test:emulator    # everything, including the traps and golden reports
 pnpm traps            # corpus/trap-*: hand-written expected flips
 pnpm build            # tsup + ncc → dist/ (commit it; CI fails if it's stale)
 ```
+
+To run the playground on a public server, see [deploy/README.md](deploy/README.md).
 
 ## Related
 
