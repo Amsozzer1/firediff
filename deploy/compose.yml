@@ -1,19 +1,24 @@
-# The hosted playground behind Caddy (TLS). Run from this directory: docker compose up -d --build
-# Set PLAYGROUND_DOMAIN in deploy/.env (see .env.example).
+# The hosted playground behind a Cloudflare Tunnel. Run from this directory: docker compose up -d --build
+# Nothing is published on the host and nothing is mounted: cloudflared dials out to Cloudflare, and
+# Cloudflare sends firediff.amsozzer.com traffic back down that connection to http://firediff:8787.
+# Put TUNNEL_TOKEN in deploy/.env (see .env.example and README.md).
 services:
   firediff:
     build: ..
     image: firediff-playground
-    # --trust-proxy: rate limits key on the address Caddy forwards. The port is only reachable
-    # from Caddy (expose, not ports), so clients can't reach it directly to fake that header.
-    command: ["playground", "--hosted", "--trust-proxy", "--host", "0.0.0.0", "--port", "8787"]
+    # cf-connecting-ip: the visitor's address, set by Cloudflare. Safe to trust because the only way
+    # in is the tunnel (expose, not ports).
+    command: ["playground", "--hosted", "--ip-header", "cf-connecting-ip", "--host", "0.0.0.0", "--port", "8787"]
     expose: ["8787"]
     restart: unless-stopped
     init: true
     environment:
       # Cap the emulator's heap; if it runs out anyway it exits and firediff starts a new one.
       JAVA_TOOL_OPTIONS: -Xmx1g -XX:+ExitOnOutOfMemoryError
-    mem_limit: 3g
+    mem_limit: 2g
+    memswap_limit: 2g
+    cpus: 1.5
+    pids_limit: 512
     read_only: true
     tmpfs: [/tmp]
     cap_drop: [ALL]
@@ -22,21 +27,18 @@ services:
       driver: json-file
       options: { max-size: 10m, max-file: "3" }
 
-  caddy:
-    image: caddy:2
-    restart: unless-stopped
-    ports: ["80:80", "443:443", "443:443/udp"]
+  cloudflared:
+    image: cloudflare/cloudflared:2026.9.3
+    command: ["tunnel", "--no-autoupdate", "run"]
     environment:
-      PLAYGROUND_DOMAIN: ${PLAYGROUND_DOMAIN:?set PLAYGROUND_DOMAIN in deploy/.env}
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN in deploy/.env}
+    restart: unless-stopped
     depends_on: [firediff]
+    mem_limit: 256m
+    cpus: 0.5
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     logging:
       driver: json-file
       options: { max-size: 10m, max-file: "3" }
-
-volumes:
-  caddy_data:
-  caddy_config:
