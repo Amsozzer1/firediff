@@ -148461,6 +148461,12 @@ function playgroundPage(hosted) {
   function save() {
     try { localStorage.setItem('firediff-playground', JSON.stringify(Object.fromEntries(fields.map((f) => [f, $(f).value])))); } catch {}
   }
+  function failure(code) {
+    if (code === 504) return 'This comparison took longer than the time limit. Run it locally: npx @amsozzer/firediff base.rules head.rules';
+    if (code === 429) return 'Too many comparisons. Try again in a minute.';
+    if (code === 413) return 'These rules are too big for this playground. Run it locally: npx @amsozzer/firediff base.rules head.rules';
+    return 'Something went wrong (HTTP ' + code + ').';
+  }
   function status(text, cls = '') { $('status').textContent = text; $('status').className = cls; }
   async function run() {
     save();
@@ -148470,8 +148476,10 @@ function playgroundPage(hosted) {
     try {
       const res = await fetch('/api/diff', { method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ base: $('base').value, head: $('head').value, config: $('config').value }) });
-      const body = await res.json();
-      if (!res.ok) { status(body.error || 'Something went wrong', 'error'); return; }
+      // A proxy in front (Cloudflare replaces 502/504 bodies) may send no JSON, so fall back on the status.
+      let body = null;
+      try { body = await res.json(); } catch {}
+      if (!res.ok || !body) { status((body && body.error) || failure(res.status), 'error'); return; }
       markdown = body.markdown;
       $('report').innerHTML = body.html;
       $('copy').disabled = false;

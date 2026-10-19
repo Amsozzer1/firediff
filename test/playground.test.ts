@@ -49,6 +49,12 @@ describe('playground', () => {
     expect(calls.at(-1)![2]).toEqual({ claims: { plan: ['pro'] } });
   });
 
+  it('explains a failed comparison from its status when a proxy replaced the body (Cloudflare does for 504)', async () => {
+    const html = await (await fetch(`${base}/`)).text();
+    expect(html).toContain("if (code === 504) return 'This comparison took longer than the time limit.");
+    expect(html).toContain('try { body = await res.json(); } catch {}');
+  });
+
   it('returns parse errors with line:col, before running anything', async () => {
     const before = calls.length;
     const res = await post({ base: rules('request.auth.uid == '), head: rules('true') });
